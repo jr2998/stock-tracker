@@ -92,17 +92,16 @@ def safe_get(d, *keys):
 # ─── Screener ─────────────────────────────────────────────────────────────────
 
 def get_screener_tickers():
-    """Return top 20 tickers by market cap via finvizfinance screener."""
-    print("Running Finviz screener (Top 20 by Market Cap)...")
+    """Return all tickers with market cap >$2B via finvizfinance screener."""
+    print("Running Finviz screener (all companies >$2B market cap)...")
     screener = Overview()
     screener.set_filter(filters_dict={"Market Cap.": "+Mid (over $2bln)"})
     df = screener.screener_view(order="Market Cap.", ascend=False, verbose=1)
     if df is None or df.empty:
         print("  Screener returned no results.")
         return []
-    df = df.head(20)
     tickers = df["Ticker"].dropna().tolist()
-    print(f"  Top {len(tickers)} tickers selected.")
+    print(f"  {len(tickers)} tickers selected.")
     return tickers
 
 
@@ -406,15 +405,6 @@ def build_stock_record(raw):
         "eps_surpr":       eps_surpr,
         "sales_surpr":     sales_surpr,
         # Not available on free tier
-        "eps_q_est":       "-",
-        "rev_q_est":       "-",
-        "rev_ann_rep":     "-",
-        "rev_ann_est_cur": "-",
-        "rev_ann_est_fut": "-",
-        "eps_rev_up":      "-",
-        "eps_rev_down":    "-",
-        "sales_rev_up":    "-",
-        "sales_rev_down":  "-",
         "avg_target_price": safe_get(fund, "Target Price"),
     }
 
@@ -707,17 +697,8 @@ def generate_html(stocks, generated_at):
           <th data-col="sales_yy_ttm">Sales Y/Y TTM</th>
           <th data-col="eps_surpr">EPS Surprise</th>
           <th data-col="sales_surpr">Sales Surprise</th>
-          <th data-col="eps_q_est">EPS Q YoY Est.</th>
           <th data-col="eps_q_rep">EPS Q YoY Rep.</th>
-          <th data-col="rev_q_est">Rev Q YoY Est.</th>
-          <th data-col="rev_q_rep">Rev Q YoY Rep.</th>
-          <th data-col="rev_ann_est_cur">Rev Ann Est (Cur Yr)</th>
-          <th data-col="rev_ann_est_fut">Rev Ann Est (Fut Yr)</th>
-          <th data-col="rev_ann_rep">Rev Ann Reported</th>
-          <th data-col="eps_rev_up">EPS Rev ↑</th>
-          <th data-col="eps_rev_down">EPS Rev ↓</th>
-          <th data-col="sales_rev_up">Sales Rev ↑</th>
-          <th data-col="sales_rev_down">Sales Rev ↓</th>
+          <th data-col="sales_q_rep">Sales Q YoY Rep.</th>
           <th data-col="avg_target_price">Avg Target</th>
         </tr>
       </thead>
@@ -778,17 +759,9 @@ function renderTable(data) {{
       ${{cell(s.sales_yy_ttm)}}
       ${{cell(s.eps_surpr)}}
       ${{cell(s.sales_surpr)}}
-      ${{cell(s.eps_q_est)}}
       ${{cell(s.eps_q_rep)}}
-      ${{cell(s.rev_q_est)}}
       ${{cell(s.sales_q_rep)}}
-      ${{cell(s.rev_ann_est_cur, true)}}
-      ${{cell(s.rev_ann_est_fut, true)}}
-      ${{cell(s.rev_ann_rep, true)}}
-      ${{cell(s.eps_rev_up)}}
-      ${{cell(s.eps_rev_down)}}
-      ${{cell(s.sales_rev_up)}}
-      ${{cell(s.sales_rev_down)}}
+      ${{cell(s.sales_q_rep)}}
       ${{cell(s.avg_target_price, true)}}
     `;
     tbody.appendChild(tr);
