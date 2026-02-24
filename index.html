@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Stock Tracker — Market Cap &gt; $2B</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0c10;
+    --surface:   #10131a;
+    --border:    #1e2435;
+    --accent:    #00e5a0;
+    --accent2:   #0066ff;
+    --mid:       #f0a500;
+    --large:     #4da6ff;
+    --mega:      #c084fc;
+    --text:      #e2e8f0;
+    --muted:     #64748b;
+    --positive:  #34d399;
+    --negative:  #f87171;
+    --font-head: 'Syne', sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 13px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Animated grid background ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,160,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,160,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .wrapper { position: relative; z-index: 1; padding: 2rem; max-width: 1800px; margin: 0 auto; }
+
+  /* ── Header ── */
+  header {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    margin-bottom: 2.5rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; gap: 1rem;
+  }
+  .header-left h1 {
+    font-family: var(--font-head);
+    font-size: clamp(1.8rem, 4vw, 3rem);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: #fff;
+  }
+  .header-left h1 span { color: var(--accent); }
+  .header-left p {
+    margin-top: 0.4rem;
+    color: var(--muted);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .stats {
+    display: flex; gap: 2rem; flex-wrap: wrap;
+  }
+  .stat {
+    text-align: right;
+  }
+  .stat-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted); }
+  .stat-value { font-family: var(--font-head); font-size: 1.4rem; font-weight: 700; color: var(--accent); }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex; gap: 1.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; align-items: center;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 0.4rem;
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot.mid { background: var(--mid); }
+  .dot.large { background: var(--large); }
+  .dot.mega { background: var(--mega); }
+
+  /* ── Filter bar ── */
+  .filters {
+    display: flex; gap: 0.75rem; margin-bottom: 1.25rem; flex-wrap: wrap; align-items: center;
+  }
+  .filter-btn {
+    padding: 0.35rem 0.9rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .filter-btn:hover, .filter-btn.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(0,229,160,0.06);
+  }
+  .search-wrap {
+    margin-left: auto;
+    position: relative;
+  }
+  .search-wrap input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    padding: 0.35rem 0.9rem;
+    border-radius: 4px;
+    width: 200px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-wrap input:focus { border-color: var(--accent); }
+  .search-wrap input::placeholder { color: var(--muted); }
+
+  /* ── Table container ── */
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    white-space: nowrap;
+  }
+
+  /* ── Header cells ── */
+  thead tr {
+    background: var(--surface);
+    border-bottom: 2px solid var(--border);
+  }
+  th {
+    padding: 0.75rem 0.9rem;
+    font-family: var(--font-head);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    position: relative;
+    transition: color 0.15s;
+  }
+  th:hover { color: var(--accent); }
+  th.sort-asc { color: var(--accent); }
+  th.sort-asc::after { content: ' ↑'; }
+  th.sort-desc { color: var(--accent); }
+  th.sort-desc::after { content: ' ↓'; }
+
+  /* ── Data rows ── */
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+  }
+  tbody tr:hover { background: rgba(255,255,255,0.025); }
+  tbody tr.hidden { display: none; }
+
+  td {
+    padding: 0.6rem 0.9rem;
+    color: var(--text);
+    vertical-align: middle;
+  }
+
+  /* ── Ticker cell ── */
+  .cell-ticker {
+    font-family: var(--font-head);
+    font-weight: 700;
+    font-size: 13px;
+    color: #fff;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Cap category badge ── */
+  .badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .badge-mid   { background: rgba(240,165,0,0.15);   color: var(--mid);   border: 1px solid rgba(240,165,0,0.3); }
+  .badge-large { background: rgba(77,166,255,0.12);  color: var(--large); border: 1px solid rgba(77,166,255,0.3); }
+  .badge-mega  { background: rgba(192,132,252,0.12); color: var(--mega);  border: 1px solid rgba(192,132,252,0.3); }
+
+  /* ── Positive / Negative values ── */
+  .pos { color: var(--positive); }
+  .neg { color: var(--negative); }
+  .neutral { color: var(--muted); }
+
+  /* ── Footer ── */
+  footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <header>
+    <div class="header-left">
+      <h1>Stock<span>Track</span></h1>
+      <p>Market Cap &gt; $2B &nbsp;·&nbsp; Updated every Sunday at 8 PM ET</p>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-label">Total Tickers</div>
+        <div class="stat-value" id="total-count">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Last Updated</div>
+        <div class="stat-value" style="font-size:1rem;color:var(--text)">Feb 23, 2026</div>
+      </div>
+    </div>
+  </header>
+
+  <div class="legend">
+    <div class="legend-item"><span class="dot mid"></span> Mid Cap ($2B–$20B)</div>
+    <div class="legend-item"><span class="dot large"></span> Large Cap ($20B–$200B)</div>
+    <div class="legend-item"><span class="dot mega"></span> Mega Cap ($200B+)</div>
+  </div>
+
+  <div class="filters">
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="Mid Cap">Mid Cap</button>
+    <button class="filter-btn" data-filter="Large Cap">Large Cap</button>
+    <button class="filter-btn" data-filter="Mega Cap">Mega Cap</button>
+    <div class="search-wrap">
+      <input type="text" id="ticker-search" placeholder="Search ticker…">
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table id="stock-table">
+      <thead>
+        <tr>
+          <th data-col="ticker">Ticker</th>
+          <th data-col="market_cap">Mkt Cap</th>
+          <th data-col="cap_category">Category</th>
+          <th data-col="next_earnings">Next Earnings</th>
+          <th data-col="eps_yy_ttm">EPS Y/Y TTM</th>
+          <th data-col="sales_yy_ttm">Sales Y/Y TTM</th>
+          <th data-col="eps_surpr">EPS Surprise</th>
+          <th data-col="sales_surpr">Sales Surprise</th>
+          <th data-col="eps_q_est">EPS Q YoY Est.</th>
+          <th data-col="eps_q_rep">EPS Q YoY Rep.</th>
+          <th data-col="rev_q_est">Rev Q YoY Est.</th>
+          <th data-col="rev_q_rep">Rev Q YoY Rep.</th>
+          <th data-col="rev_ann_est_cur">Rev Ann Est (Cur Yr)</th>
+          <th data-col="rev_ann_est_fut">Rev Ann Est (Fut Yr)</th>
+          <th data-col="rev_ann_rep">Rev Ann Reported</th>
+          <th data-col="eps_rev_up">EPS Rev ↑</th>
+          <th data-col="eps_rev_down">EPS Rev ↓</th>
+          <th data-col="sales_rev_up">Sales Rev ↑</th>
+          <th data-col="sales_rev_down">Sales Rev ↓</th>
+          <th data-col="avg_target_price">Avg Target</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+
+  <footer>
+    <span>Data sourced from Finviz.com &nbsp;·&nbsp; For informational purposes only &nbsp;·&nbsp; Not financial advice</span>
+    <span>Next update: Sunday 8 PM ET</span>
+  </footer>
+</div>
+
+<script>
+const STOCKS = [
+  {
+    "ticker": "AAPL",
+    "market_cap": "3907.83B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 29 AMC",
+    "eps_yy_ttm": "25.58%",
+    "sales_yy_ttm": "10.07%",
+    "eps_q_rep": "18.54%",
+    "sales_q_rep": "15.65%",
+    "eps_surpr": "6.24%",
+    "sales_surpr": "3.88%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "297.92"
+  },
+  {
+    "ticker": "AMZN",
+    "market_cap": "2203.56B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 05 AMC",
+    "eps_yy_ttm": "28.97%",
+    "sales_yy_ttm": "12.38%",
+    "eps_q_rep": "5.04%",
+    "sales_q_rep": "13.63%",
+    "eps_surpr": "-1.00%",
+    "sales_surpr": "0.92%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "280.56"
+  },
+  {
+    "ticker": "ASML",
+    "market_cap": "575.97B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 28 BMO",
+    "eps_yy_ttm": "34.44%",
+    "sales_yy_ttm": "21.00%",
+    "eps_q_rep": "17.00%",
+    "sales_q_rep": "14.48%",
+    "eps_surpr": "-1.01%",
+    "sales_surpr": "3.77%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "1649.33"
+  },
+  {
+    "ticker": "AVGO",
+    "market_cap": "1566.23B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Mar 04 AMC",
+    "eps_yy_ttm": "285.84%",
+    "sales_yy_ttm": "23.87%",
+    "eps_q_rep": "94.54%",
+    "sales_q_rep": "28.18%",
+    "eps_surpr": "4.43%",
+    "sales_surpr": "3.14%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "457.40"
+  },
+  {
+    "ticker": "BRK-A",
+    "market_cap": "1065.30B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Nov 01 AMC",
+    "eps_yy_ttm": "-36.97%",
+    "sales_yy_ttm": "0.60%",
+    "eps_q_rep": "17.19%",
+    "sales_q_rep": "2.13%",
+    "eps_surpr": "9.39%",
+    "sales_surpr": "-0.68%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "798985.52"
+  },
+  {
+    "ticker": "BRK-B",
+    "market_cap": "1065.50B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Mar 02 BMO",
+    "eps_yy_ttm": "-36.83%",
+    "sales_yy_ttm": "0.60%",
+    "eps_q_rep": "17.19%",
+    "sales_q_rep": "2.13%",
+    "eps_surpr": "9.39%",
+    "sales_surpr": "-0.68%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "532.92"
+  },
+  {
+    "ticker": "GOOG",
+    "market_cap": "3771.04B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 04 AMC",
+    "eps_yy_ttm": "34.19%",
+    "sales_yy_ttm": "15.22%",
+    "eps_q_rep": "31.12%",
+    "sales_q_rep": "18.19%",
+    "eps_surpr": "7.04%",
+    "sales_surpr": "2.25%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "378.98"
+  },
+  {
+    "ticker": "GOOGL",
+    "market_cap": "3767.66B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 04 AMC",
+    "eps_yy_ttm": "34.19%",
+    "sales_yy_ttm": "15.22%",
+    "eps_q_rep": "31.12%",
+    "sales_q_rep": "18.19%",
+    "eps_surpr": "7.02%",
+    "sales_surpr": "2.24%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "379.15"
+  },
+  {
+    "ticker": "JNJ",
+    "market_cap": "592.45B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 21 BMO",
+    "eps_yy_ttm": "90.55%",
+    "sales_yy_ttm": "6.05%",
+    "eps_q_rep": "48.39%",
+    "sales_q_rep": "9.07%",
+    "eps_surpr": "-0.12%",
+    "sales_surpr": "1.72%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "238.78"
+  },
+  {
+    "ticker": "JPM",
+    "market_cap": "802.83B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 13 BMO",
+    "eps_yy_ttm": "1.34%",
+    "sales_yy_ttm": "0.37%",
+    "eps_q_rep": "-3.72%",
+    "sales_q_rep": "3.15%",
+    "eps_surpr": "-4.57%",
+    "sales_surpr": "-0.80%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "351.92"
+  },
+  {
+    "ticker": "LLY",
+    "market_cap": "998.60B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 04 BMO",
+    "eps_yy_ttm": "96.48%",
+    "sales_yy_ttm": "44.70%",
+    "eps_q_rep": "50.92%",
+    "sales_q_rep": "42.56%",
+    "eps_surpr": "9.10%",
+    "sales_surpr": "7.51%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "1245.37"
+  },
+  {
+    "ticker": "META",
+    "market_cap": "1611.96B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 28 AMC",
+    "eps_yy_ttm": "-2.66%",
+    "sales_yy_ttm": "22.17%",
+    "eps_q_rep": "10.71%",
+    "sales_q_rep": "23.78%",
+    "eps_surpr": "8.13%",
+    "sales_surpr": "2.45%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "856.77"
+  },
+  {
+    "ticker": "MSFT",
+    "market_cap": "2854.93B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 28 AMC",
+    "eps_yy_ttm": "28.60%",
+    "sales_yy_ttm": "16.67%",
+    "eps_q_rep": "59.69%",
+    "sales_q_rep": "16.72%",
+    "eps_surpr": "6.00%",
+    "sales_surpr": "1.20%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "594.91"
+  },
+  {
+    "ticker": "MU",
+    "market_cap": "473.81B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Dec 17 AMC",
+    "eps_yy_ttm": "203.31%",
+    "sales_yy_ttm": "45.43%",
+    "eps_q_rep": "176.27%",
+    "sales_q_rep": "56.65%",
+    "eps_surpr": "20.67%",
+    "sales_surpr": "5.70%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "392.45"
+  },
+  {
+    "ticker": "NVDA",
+    "market_cap": "4654.67B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 25 AMC",
+    "eps_yy_ttm": "58.53%",
+    "sales_yy_ttm": "65.22%",
+    "eps_q_rep": "67.23%",
+    "sales_q_rep": "62.49%",
+    "eps_surpr": "3.09%",
+    "sales_surpr": "3.72%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "260.58"
+  },
+  {
+    "ticker": "TSLA",
+    "market_cap": "1500.33B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 28 AMC",
+    "eps_yy_ttm": "-47.22%",
+    "sales_yy_ttm": "-2.93%",
+    "eps_q_rep": "-63.92%",
+    "sales_q_rep": "-3.14%",
+    "eps_surpr": "9.94%",
+    "sales_surpr": "0.50%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "426.86"
+  },
+  {
+    "ticker": "TSM",
+    "market_cap": "1919.21B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 15 BMO",
+    "eps_yy_ttm": "56.19%",
+    "sales_yy_ttm": "36.10%",
+    "eps_q_rep": "40.61%",
+    "sales_q_rep": "25.50%",
+    "eps_surpr": "6.37%",
+    "sales_surpr": "0.39%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "419.96"
+  },
+  {
+    "ticker": "V",
+    "market_cap": "584.23B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 29 AMC",
+    "eps_yy_ttm": "5.38%",
+    "sales_yy_ttm": "12.47%",
+    "eps_q_rep": "17.68%",
+    "sales_q_rep": "14.63%",
+    "eps_surpr": "0.88%",
+    "sales_surpr": "1.99%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "405.61"
+  },
+  {
+    "ticker": "WMT",
+    "market_cap": "1002.73B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Feb 19 BMO",
+    "eps_yy_ttm": "13.47%",
+    "sales_yy_ttm": "4.73%",
+    "eps_q_rep": "-18.51%",
+    "sales_q_rep": "5.60%",
+    "eps_surpr": "1.80%",
+    "sales_surpr": "0.09%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "136.79"
+  },
+  {
+    "ticker": "XOM",
+    "market_cap": "628.18B",
+    "cap_category": "Mega Cap",
+    "next_earnings": "Jan 30 BMO",
+    "eps_yy_ttm": "-14.98%",
+    "sales_yy_ttm": "-4.86%",
+    "eps_q_rep": "-11.04%",
+    "sales_q_rep": "-1.81%",
+    "eps_surpr": "0.61%",
+    "sales_surpr": "2.08%",
+    "eps_q_est": "-",
+    "rev_q_est": "-",
+    "rev_ann_rep": "-",
+    "rev_ann_est_cur": "-",
+    "rev_ann_est_fut": "-",
+    "eps_rev_up": "-",
+    "eps_rev_down": "-",
+    "sales_rev_up": "-",
+    "sales_rev_down": "-",
+    "avg_target_price": "141.32"
+  }
+];
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function parseNumeric(val) {
+  if (!val || val === '-') return null;
+  const clean = val.replace(/[$,B%+]/g, '').trim();
+  const n = parseFloat(clean);
+  return isNaN(n) ? null : n;
+}
+
+function colorClass(val) {
+  if (!val || val === '-') return 'neutral';
+  const str = String(val);
+  if (str.startsWith('-')) return 'neg';
+  if (str.startsWith('+') || parseFloat(str) > 0) return 'pos';
+  return 'neutral';
+}
+
+function badgeClass(cat) {
+  if (cat === 'Mid Cap')   return 'badge badge-mid';
+  if (cat === 'Large Cap') return 'badge badge-large';
+  if (cat === 'Mega Cap')  return 'badge badge-mega';
+  return 'badge';
+}
+
+function cell(val, collapseColor=false) {
+  const cls = collapseColor ? '' : colorClass(val);
+  return `<td class="${cls}">${val || '-'}</td>`;
+}
+
+// ── Render table ─────────────────────────────────────────────────────────────
+function renderTable(data) {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = '';
+  data.forEach(s => {
+    const tr = document.createElement('tr');
+    tr.dataset.category = s.cap_category;
+    tr.innerHTML = `
+      <td class="cell-ticker">${s.ticker}</td>
+      <td>${s.market_cap}</td>
+      <td><span class="${badgeClass(s.cap_category)}">${s.cap_category}</span></td>
+      ${cell(s.next_earnings, true)}
+      ${cell(s.eps_yy_ttm)}
+      ${cell(s.sales_yy_ttm)}
+      ${cell(s.eps_surpr)}
+      ${cell(s.sales_surpr)}
+      ${cell(s.eps_q_est)}
+      ${cell(s.eps_q_rep)}
+      ${cell(s.rev_q_est)}
+      ${cell(s.sales_q_rep)}
+      ${cell(s.rev_ann_est_cur, true)}
+      ${cell(s.rev_ann_est_fut, true)}
+      ${cell(s.rev_ann_rep, true)}
+      ${cell(s.eps_rev_up)}
+      ${cell(s.eps_rev_down)}
+      ${cell(s.sales_rev_up)}
+      ${cell(s.sales_rev_down)}
+      ${cell(s.avg_target_price, true)}
+    `;
+    tbody.appendChild(tr);
+  });
+  document.getElementById('total-count').textContent = data.length.toLocaleString();
+}
+
+// ── Sort ─────────────────────────────────────────────────────────────────────
+let sortState = { col: 'ticker', dir: 'asc' };
+
+function sortData(data, col, dir) {
+  return [...data].sort((a, b) => {
+    const av = a[col], bv = b[col];
+    const an = parseNumeric(av), bn = parseNumeric(bv);
+    let cmp;
+    if (an !== null && bn !== null) {
+      cmp = an - bn;
+    } else {
+      cmp = String(av || '').localeCompare(String(bv || ''));
+    }
+    return dir === 'asc' ? cmp : -cmp;
+  });
+}
+
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortState.col === col) {
+      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortState.col = col;
+      sortState.dir = 'asc';
+    }
+    document.querySelectorAll('th').forEach(h => h.classList.remove('sort-asc','sort-desc'));
+    th.classList.add(sortState.dir === 'asc' ? 'sort-asc' : 'sort-desc');
+    applyFilters();
+  });
+});
+
+// ── Filter ───────────────────────────────────────────────────────────────────
+let activeFilter = 'all';
+let searchQuery = '';
+
+function applyFilters() {
+  let data = STOCKS;
+  if (activeFilter !== 'all') {
+    data = data.filter(s => s.cap_category === activeFilter);
+  }
+  if (searchQuery) {
+    data = data.filter(s => s.ticker.toUpperCase().includes(searchQuery.toUpperCase()));
+  }
+  data = sortData(data, sortState.col, sortState.dir);
+  renderTable(data);
+}
+
+document.querySelectorAll('.filter-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeFilter = btn.dataset.filter;
+    applyFilters();
+  });
+});
+
+document.getElementById('ticker-search').addEventListener('input', e => {
+  searchQuery = e.target.value;
+  applyFilters();
+});
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+applyFilters();
+</script>
+</body>
+</html>
