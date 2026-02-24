@@ -1,0 +1,45 @@
+name: Update Stock Tracker
+
+on:
+  schedule:
+    # 8 PM Eastern = midnight UTC (UTC-4 in EDT, UTC-5 in EST)
+    # We use 0 0 * * 1 (Monday 00:00 UTC) = Sunday 8 PM EDT
+    # During EST (winter), 8 PM ET = 01:00 UTC Monday
+    # This cron covers EDT (summer):
+    - cron: '0 0 * * 1'   # Monday 00:00 UTC = Sunday 8 PM EDT
+    # Uncomment the line below and comment the above for EST (Nov–Mar):
+    # - cron: '0 1 * * 1'   # Monday 01:00 UTC = Sunday 8 PM EST
+
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the updated index.html
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install finvizfinance requests
+
+      - name: Run scraper
+        run: python scraper.py
+
+      - name: Commit and push updated index.html
+        run: |
+          git config --global user.name  "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          # Only commit if there are changes
+          git diff --cached --quiet || git commit -m "chore: update stock data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
