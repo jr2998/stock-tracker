@@ -172,11 +172,11 @@ def build_html(data, portfolio):
 
   <div class="legend">
     <span class="legend-label">Grade:</span>
-    <div class="legend-item"><span class="gb grade-a">A</span><span>90–100 Exceptional</span></div>
-    <div class="legend-item"><span class="gb grade-b">B</span><span>80–89 Good</span></div>
-    <div class="legend-item"><span class="gb grade-c">C</span><span>70–79 Average</span></div>
-    <div class="legend-item"><span class="gb grade-d">D</span><span>60–69 Weak</span></div>
-    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;60 Poor</span></div>
+    <div class="legend-item"><span class="gb grade-a">A</span><span>≥81 Exceptional</span></div>
+    <div class="legend-item"><span class="gb grade-b">B</span><span>75–80 Good</span></div>
+    <div class="legend-item"><span class="gb grade-c">C</span><span>68–74 Average</span></div>
+    <div class="legend-item"><span class="gb grade-d">D</span><span>58–67 Weak</span></div>
+    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;58 Poor</span></div>
   </div>
 
   <div class="controls">
@@ -249,7 +249,7 @@ def build_html(data, portfolio):
 <div class="page" id="page-performance">
   <div style="margin-top:24px;margin-bottom:22px">
     <div class="section-title">Performance Tracker</div>
-    <div class="section-sub">// Simulated portfolio · Buys scores ≥70 · Sells scores &lt;65 · Started <span id="port-start-date">—</span></div>
+    <div class="section-sub">// Simulated portfolio · Buys A &amp; B grades (≥75) · Sells at C (&lt;68) · Started <span id="port-start-date">—</span></div>
   </div>
 
   <!-- KPI Cards -->
