@@ -1,34 +1,34 @@
 """
-scraper.py  —  Stock Tracker v2
-Fetches fundamentals for all US-listed companies with market cap >$20B
-via yfinance, scores each metric, assigns an A–F grade, and writes data.json.
+scraper.py  —  Stock Tracker v3
+Fetches fundamentals for all tickers in the universe via yfinance,
+scores each metric, assigns an A–F grade, writes data.json.
+Also manages portfolio.json (simulated portfolio based on grades).
 
 Run:  python scraper.py
-Output: data.json  (read by generate_html.py)
+Output: data.json, portfolio.json
 """
 
 import json
 import math
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from pathlib import Path
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-MIN_MARKET_CAP_B = 20          # $20B minimum
-OUTPUT_FILE      = "data.json"
-DELAY_BETWEEN    = 1.0         # seconds between tickers (be polite to Yahoo)
-MAX_RETRIES      = 3
+OUTPUT_FILE     = "data.json"
+PORTFOLIO_FILE  = "portfolio.json"
+DELAY_BETWEEN   = 0.8   # seconds between tickers
+MAX_RETRIES     = 3
+PORTFOLIO_START = 1_000_000.0   # starting cash
+BUY_THRESHOLD   = 3.0           # buy stocks with overall >= this
+SELL_THRESHOLD  = 2.9           # sell stocks with overall < this
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
-#
-# Static list of S&P 500 constituents (as of early 2025).
-# Wikipedia blocks requests from GitHub Actions (403), so we embed the list
-# directly. The scraper then filters to >$20B market cap at fetch time.
-# Update this list periodically as the index composition changes.
 
 SP500_TICKERS = [
     "A","AAPL","ABBV","ABNB","ABT","ACGL","ACN","ADBE","ADI","ADM","ADP","ADSK",
@@ -85,7 +85,6 @@ SP500_TICKERS = [
     "ZBH","ZBRA","ZTS",
 ]
 
-# Additional large-cap tickers not in S&P 500 but commonly >$20B
 EXTRA_TICKERS = [
     "ABNB","ARM","AXON","COIN","CRWD","DDOG","DASH","DUOL","EXAS","HOOD",
     "MELI","NTNX","OKTA","PANW","PATH","PLTR","RBLX","RIVN","SHOP","SMCI",
@@ -93,21 +92,14 @@ EXTRA_TICKERS = [
 ]
 
 def get_ticker_universe():
-    """
-    Return the combined S&P 500 + extra large-cap ticker list.
-    Uses a static embedded list to avoid external HTTP dependencies in CI.
-    The scraper filters to >$20B market cap at fetch time.
-    """
     combined = sorted(set(SP500_TICKERS + EXTRA_TICKERS))
-    print(f"Ticker universe: {len(combined)} tickers (S&P 500 + extras)")
-    print(f"  Will filter to >${MIN_MARKET_CAP_B}B market cap during fetch")
+    print(f"Ticker universe: {len(combined)} tickers")
     return combined
 
 
 # ─── Safe helpers ─────────────────────────────────────────────────────────────
 
 def safe(val, default=None):
-    """Return val if it's a real number, else default."""
     if val is None:
         return default
     try:
@@ -118,17 +110,13 @@ def safe(val, default=None):
     except (TypeError, ValueError):
         return default
 
-
 def safe_pct(val, default=None):
-    """Convert a decimal ratio (0.25) to a percentage (25.0)."""
     v = safe(val)
     if v is None:
         return default
     return round(v * 100, 2)
 
-
 def calc_growth(new_val, old_val):
-    """YoY growth % given two values. Returns None if inputs are invalid."""
     n = safe(new_val)
     o = safe(old_val)
     if n is None or o is None or o == 0:
@@ -139,466 +127,411 @@ def calc_growth(new_val, old_val):
 # ─── Per-ticker fetch ─────────────────────────────────────────────────────────
 
 def fetch_ticker_data(symbol):
-    """
-    Fetch all metrics for a single ticker via yfinance.
-    Returns a dict of raw values (pre-scoring), or None if fetch fails
-    or market cap is below threshold.
-    """
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            tk = yf.Ticker(symbol)
+            tk   = yf.Ticker(symbol)
             info = tk.info or {}
 
-            # ── Gate on market cap ────────────────────────────────────────
             market_cap = safe(info.get("marketCap"))
-            if market_cap is None or market_cap < MIN_MARKET_CAP_B * 1e9:
-                return None  # Skip — below threshold or no data
+            if market_cap is None or market_cap < 1e8:   # skip penny stocks / no data
+                return None
 
-            # ── Identity ──────────────────────────────────────────────────
             name     = info.get("longName") or info.get("shortName") or symbol
             sector   = info.get("sector")   or "Unknown"
             industry = info.get("industry") or "Unknown"
-            currency = info.get("currency") or "USD"
 
             # ── Price ─────────────────────────────────────────────────────
-            price          = safe(info.get("currentPrice") or info.get("regularMarketPrice"))
-            target_price   = safe(info.get("targetMeanPrice"))
+            price        = safe(info.get("currentPrice") or info.get("regularMarketPrice"))
+            target_price = safe(info.get("targetMeanPrice"))
             analyst_upside = None
             if price and target_price and price > 0:
                 analyst_upside = round((target_price - price) / price * 100, 2)
-
-            # Analyst recommendation: yfinance gives 1.0 (Strong Buy) – 5.0 (Sell)
             analyst_rec = safe(info.get("recommendationMean"))
 
-            # 52-week performance
-            price_52w_low  = safe(info.get("fiftyTwoWeekLow"))
-            price_52w_high = safe(info.get("fiftyTwoWeekHigh"))
+            # 52-week performance via actual history
             perf_52w = None
-            if price and price_52w_low and price_52w_low > 0:
-                # Use 52w low as proxy for ~1yr ago price if history unavailable
-                # Better: use actual 1yr ago price from history
-                try:
-                    hist = tk.history(period="1y", auto_adjust=True)
-                    if not hist.empty:
-                        price_1y_ago = float(hist["Close"].iloc[0])
-                        if price_1y_ago > 0:
-                            perf_52w = round((price - price_1y_ago) / price_1y_ago * 100, 2)
-                except Exception:
-                    pass
+            try:
+                hist = tk.history(period="1y", auto_adjust=True)
+                if not hist.empty and price:
+                    price_1y_ago = float(hist["Close"].iloc[0])
+                    if price_1y_ago > 0:
+                        perf_52w = round((price - price_1y_ago) / price_1y_ago * 100, 2)
+            except Exception:
+                pass
 
             # ── Valuation ─────────────────────────────────────────────────
             forward_pe  = safe(info.get("forwardPE"))
-            trailing_pe = safe(info.get("trailingPE"))
             peg_ratio   = safe(info.get("pegRatio"))
             ev_ebitda   = safe(info.get("enterpriseToEbitda"))
             price_sales = safe(info.get("priceToSalesTrailing12Months"))
-            price_book  = safe(info.get("priceToBook"))
-            ev          = safe(info.get("enterpriseValue"))
 
             # ── Profitability ─────────────────────────────────────────────
-            gross_margin   = safe_pct(info.get("grossMargins"))
+            gross_margin     = safe_pct(info.get("grossMargins"))
             operating_margin = safe_pct(info.get("operatingMargins"))
-            profit_margin  = safe_pct(info.get("profitMargins"))
-            roe            = safe_pct(info.get("returnOnEquity"))
-            roa            = safe_pct(info.get("returnOnAssets"))
-            debt_equity    = safe(info.get("debtToEquity"))
-            # yfinance returns D/E as a raw ratio (e.g. 150 means 1.5x), normalize
+            profit_margin    = safe_pct(info.get("profitMargins"))
+            roe              = safe_pct(info.get("returnOnEquity"))
+            roa              = safe_pct(info.get("returnOnAssets"))
+            debt_equity      = safe(info.get("debtToEquity"))
             if debt_equity is not None:
                 debt_equity = round(debt_equity / 100, 3)
 
-            # ── Growth (TTM) ──────────────────────────────────────────────
-            # Revenue growth TTM: yfinance provides revenueGrowth (YoY quarterly)
-            # and earningsGrowth. These are decimal ratios.
-            rev_growth_ttm = safe_pct(info.get("revenueGrowth"))   # quarterly YoY
-            eps_growth_ttm = safe_pct(info.get("earningsGrowth"))  # quarterly YoY
+            # ── Growth fallbacks from info ─────────────────────────────────
+            rev_growth_info = safe_pct(info.get("revenueGrowth"))
+            eps_growth_info = safe_pct(info.get("earningsGrowth"))
 
-            # For true TTM-over-TTM, pull annual financials
-            rev_growth_yoy_ttm = None
-            eps_growth_yoy_ttm = None
-            rev_growth_qoq_accel = None  # current Q YoY vs prior Q YoY (acceleration)
-            eps_growth_qoq_accel = None
+            # ── Quarterly financials ───────────────────────────────────────
+            rev_growth_ttm       = None
+            eps_growth_ttm       = None
+            rev_accel            = None
+            eps_accel            = None
 
             try:
-                # Quarterly financials give us the last 4 quarters
-                q_income = tk.quarterly_income_stmt
-                if q_income is not None and not q_income.empty:
-                    cols = q_income.columns  # newest first
+                # yfinance returns quarterly_income_stmt with rows as metrics,
+                # columns as quarter-end dates (newest first after sort).
+                q_inc = tk.quarterly_income_stmt
+                a_inc = tk.income_stmt   # annual, newest first
 
-                    # TTM revenue = sum of 4 most recent quarters
-                    def ttm_sum(row_name, df):
-                        if row_name in df.index and len(df.columns) >= 4:
-                            vals = df.loc[row_name].iloc[:4]
-                            if vals.notna().sum() >= 3:
-                                return float(vals.sum(skipna=True))
+                if q_inc is not None and not q_inc.empty:
+                    # Ensure newest-first column order
+                    q_inc = q_inc.sort_index(axis=1, ascending=False)
+                    nq    = q_inc.shape[1]
+
+                    def get_row(df, *names):
+                        for n in names:
+                            if n in df.index:
+                                return df.loc[n].astype(float)
                         return None
 
-                    ttm_rev  = ttm_sum("Total Revenue", q_income)
-                    prev_rev = None
-                    if len(cols) >= 8:
-                        prev_vals = q_income["Total Revenue"].iloc[4:8] if "Total Revenue" in q_income.index else None
-                        if prev_vals is not None and prev_vals.notna().sum() >= 3:
-                            prev_rev = float(prev_vals.sum(skipna=True))
+                    rev_q = get_row(q_inc, "Total Revenue", "Revenue", "Net Revenue")
+                    eps_q = get_row(q_inc, "Diluted EPS", "Basic EPS",
+                                    "Basic And Diluted EPS")
 
-                    if ttm_rev and prev_rev:
-                        rev_growth_yoy_ttm = calc_growth(ttm_rev, prev_rev)
+                    # ── TTM revenue growth ─────────────────────────────────
+                    # Method 1: 8 quarters available — compare TTM to prior TTM
+                    if rev_q is not None and nq >= 8:
+                        ttm  = rev_q.iloc[:4].sum()
+                        prev = rev_q.iloc[4:8].sum()
+                        if ttm and prev and prev != 0:
+                            rev_growth_ttm = round((ttm - prev) / abs(prev) * 100, 2)
 
-                    # Quarterly acceleration: compare most recent Q YoY to prior Q YoY
-                    if "Total Revenue" in q_income.index and len(cols) >= 5:
-                        r = q_income.loc["Total Revenue"]
-                        q0 = safe(r.iloc[0])   # most recent quarter
-                        q1 = safe(r.iloc[1])   # one quarter prior
-                        q4 = safe(r.iloc[4])   # same quarter last year (for q0)
-                        q5 = safe(r.iloc[5]) if len(cols) >= 6 else None  # same Q-1 last year
-                        if q0 and q4:
-                            cur_q_yoy = calc_growth(q0, q4)
-                            if q1 and q5:
-                                prior_q_yoy = calc_growth(q1, q5)
-                                if cur_q_yoy is not None and prior_q_yoy is not None:
-                                    rev_growth_qoq_accel = round(cur_q_yoy - prior_q_yoy, 2)
+                    # Method 2: compare TTM to most recent full fiscal year
+                    if rev_growth_ttm is None and rev_q is not None and nq >= 4 \
+                            and a_inc is not None and not a_inc.empty:
+                        a_inc_s = a_inc.sort_index(axis=1, ascending=False)
+                        rev_a   = get_row(a_inc_s, "Total Revenue", "Revenue", "Net Revenue")
+                        if rev_a is not None and len(rev_a) >= 1:
+                            ttm      = rev_q.iloc[:4].sum()
+                            prior_yr = safe(rev_a.iloc[0])
+                            if ttm and prior_yr:
+                                rev_growth_ttm = round((ttm - prior_yr) / abs(prior_yr) * 100, 2)
 
-                    # EPS acceleration
-                    eps_row = None
-                    for candidate in ["Diluted EPS", "Basic EPS", "EPS"]:
-                        if candidate in q_income.index:
-                            eps_row = candidate
-                            break
-                    if eps_row and len(cols) >= 5:
-                        e = q_income.loc[eps_row]
-                        e0 = safe(e.iloc[0])
-                        e1 = safe(e.iloc[1])
-                        e4 = safe(e.iloc[4])
-                        e5 = safe(e.iloc[5]) if len(cols) >= 6 else None
-                        if e0 and e4:
-                            cur_eps_yoy = calc_growth(e0, e4)
-                            if e1 and e5:
-                                prior_eps_yoy = calc_growth(e1, e5)
-                                if cur_eps_yoy is not None and prior_eps_yoy is not None:
-                                    eps_growth_qoq_accel = round(cur_eps_yoy - prior_eps_yoy, 2)
+                    # ── Revenue acceleration ───────────────────────────────
+                    # Q0 YoY vs Q1 YoY  (need year-ago quarters)
+                    # Prefer exact year-ago from 8-qtr data; fallback to annual/4
+                    if rev_q is not None and nq >= 2:
+                        q0 = safe(rev_q.iloc[0])
+                        q1 = safe(rev_q.iloc[1])
 
-                    # TTM EPS growth
-                    ttm_eps  = ttm_sum("Diluted EPS", q_income) or ttm_sum("Basic EPS", q_income)
-                    prev_eps = None
-                    if len(cols) >= 8:
-                        for cand in ["Diluted EPS", "Basic EPS"]:
-                            if cand in q_income.index:
-                                pv = q_income.loc[cand].iloc[4:8]
-                                if pv.notna().sum() >= 3:
-                                    prev_eps = float(pv.sum(skipna=True))
-                                    break
-                    if ttm_eps and prev_eps:
-                        eps_growth_yoy_ttm = calc_growth(ttm_eps, prev_eps)
+                        # Exact year-ago quarters
+                        q0_ya = safe(rev_q.iloc[4]) if nq >= 5 else None
+                        q1_ya = safe(rev_q.iloc[5]) if nq >= 6 else None
 
-            except Exception:
-                pass  # Fall back to info-level growth figures
+                        # Annual/4 fallback
+                        if (q0_ya is None or q1_ya is None) \
+                                and a_inc is not None and not a_inc.empty:
+                            a_inc_s = a_inc.sort_index(axis=1, ascending=False)
+                            rev_a   = get_row(a_inc_s, "Total Revenue", "Revenue", "Net Revenue")
+                            if rev_a is not None and len(rev_a) >= 2:
+                                # Use most recent and prior fiscal year /4
+                                yr0 = safe(rev_a.iloc[0])
+                                yr1 = safe(rev_a.iloc[1])
+                                if q0_ya is None and yr0:
+                                    q0_ya = yr0 / 4
+                                if q1_ya is None and yr1:
+                                    q1_ya = yr1 / 4
 
-            # Use info-level as fallback if quarterly calc failed
-            if rev_growth_yoy_ttm is None:
-                rev_growth_yoy_ttm = rev_growth_ttm
-            if eps_growth_yoy_ttm is None:
-                eps_growth_yoy_ttm = eps_growth_ttm
+                        if q0 and q0_ya and q1 and q1_ya and q0_ya != 0 and q1_ya != 0:
+                            yoy0 = (q0 - q0_ya) / abs(q0_ya) * 100
+                            yoy1 = (q1 - q1_ya) / abs(q1_ya) * 100
+                            rev_accel = round(yoy0 - yoy1, 2)
 
-            # ── Earnings surprise ─────────────────────────────────────────
-            earnings_surprise_pct = None
-            try:
-                cal = tk.earnings_dates
-                if cal is not None and not cal.empty:
-                    # Find most recent past earnings with actual EPS data
-                    past = cal.dropna(subset=["EPS Actual", "EPS Estimate"])
-                    if not past.empty:
-                        latest = past.iloc[0]
-                        actual   = safe(latest.get("EPS Actual"))
-                        estimate = safe(latest.get("EPS Estimate"))
-                        if actual is not None and estimate is not None and estimate != 0:
-                            earnings_surprise_pct = round((actual - estimate) / abs(estimate) * 100, 2)
+                    # ── EPS TTM growth ─────────────────────────────────────
+                    if eps_q is not None and nq >= 8:
+                        ttm  = eps_q.iloc[:4].sum()
+                        prev = eps_q.iloc[4:8].sum()
+                        if ttm and prev and prev != 0:
+                            eps_growth_ttm = round((ttm - prev) / abs(prev) * 100, 2)
+
+                    if eps_growth_ttm is None and eps_q is not None and nq >= 4 \
+                            and a_inc is not None and not a_inc.empty:
+                        a_inc_s = a_inc.sort_index(axis=1, ascending=False)
+                        eps_a   = get_row(a_inc_s, "Diluted EPS", "Basic EPS",
+                                          "Basic And Diluted EPS")
+                        if eps_a is not None and len(eps_a) >= 1:
+                            ttm      = eps_q.iloc[:4].sum()
+                            prior_yr = safe(eps_a.iloc[0])
+                            if ttm and prior_yr:
+                                eps_growth_ttm = round((ttm - prior_yr) / abs(prior_yr) * 100, 2)
+
+                    # ── EPS acceleration ───────────────────────────────────
+                    if eps_q is not None and nq >= 2:
+                        e0 = safe(eps_q.iloc[0])
+                        e1 = safe(eps_q.iloc[1])
+                        e0_ya = safe(eps_q.iloc[4]) if nq >= 5 else None
+                        e1_ya = safe(eps_q.iloc[5]) if nq >= 6 else None
+
+                        if (e0_ya is None or e1_ya is None) \
+                                and a_inc is not None and not a_inc.empty:
+                            a_inc_s = a_inc.sort_index(axis=1, ascending=False)
+                            eps_a   = get_row(a_inc_s, "Diluted EPS", "Basic EPS",
+                                              "Basic And Diluted EPS")
+                            if eps_a is not None and len(eps_a) >= 2:
+                                yr0 = safe(eps_a.iloc[0])
+                                yr1 = safe(eps_a.iloc[1])
+                                if e0_ya is None and yr0:
+                                    e0_ya = yr0 / 4
+                                if e1_ya is None and yr1:
+                                    e1_ya = yr1 / 4
+
+                        if e0 and e0_ya and e1 and e1_ya and e0_ya != 0 and e1_ya != 0:
+                            yoy0 = (e0 - e0_ya) / abs(e0_ya) * 100
+                            yoy1 = (e1 - e1_ya) / abs(e1_ya) * 100
+                            eps_accel = round(yoy0 - yoy1, 2)
+
             except Exception:
                 pass
 
-            # ── Next earnings date ────────────────────────────────────────
-            next_earnings = None
+            # Apply info-level fallbacks
+            if rev_growth_ttm is None:
+                rev_growth_ttm = rev_growth_info
+            if eps_growth_ttm is None:
+                eps_growth_ttm = eps_growth_info
+
+            # ── Earnings surprise ──────────────────────────────────────────
+            # yfinance earnings_dates column names vary by version:
+            # v0.2.x: "EPS Estimate", "Reported EPS"
+            # Some builds: "EPS Actual", "EPS Estimate"
+            # We search for any column containing "estimate" and any containing
+            # "report" or "actual" (case-insensitive).
+            earnings_surprise = None
+            next_earnings     = None
             try:
-                cal = tk.earnings_dates
-                if cal is not None and not cal.empty:
+                ed = tk.earnings_dates
+                if ed is not None and not ed.empty:
                     now = pd.Timestamp.now(tz="UTC")
-                    future = cal[cal.index > now]
+                    cols_lower = {c: c.lower() for c in ed.columns}
+
+                    est_col = next((c for c, cl in cols_lower.items()
+                                    if "estimate" in cl), None)
+                    act_col = next((c for c, cl in cols_lower.items()
+                                    if "reported" in cl or "actual" in cl), None)
+
+                    # Fallback: if only two numeric columns, use them
+                    if est_col is None or act_col is None:
+                        num_cols = [c for c in ed.columns
+                                    if pd.api.types.is_numeric_dtype(ed[c])]
+                        if len(num_cols) >= 2 and est_col is None:
+                            est_col = num_cols[0]
+                        if len(num_cols) >= 2 and act_col is None:
+                            act_col = num_cols[1]
+
+                    if est_col and act_col:
+                        past = ed[ed.index <= now].dropna(subset=[est_col, act_col])
+                        if not past.empty:
+                            row = past.iloc[0]
+                            actual   = safe(row[act_col])
+                            estimate = safe(row[est_col])
+                            if actual is not None and estimate is not None and estimate != 0:
+                                earnings_surprise = round(
+                                    (actual - estimate) / abs(estimate) * 100, 2)
+
+                    future = ed[ed.index > now]
                     if not future.empty:
                         next_earnings = future.index[-1].strftime("%b %d, %Y")
+
             except Exception:
                 pass
 
-            # ── Shares & float ────────────────────────────────────────────
-            shares_outstanding = safe(info.get("sharesOutstanding"))
-            float_pct = None
-            shares_float = safe(info.get("floatShares"))
-            if shares_outstanding and shares_float and shares_outstanding > 0:
-                float_pct = round(shares_float / shares_outstanding * 100, 1)
-
-            # ── Build raw record ──────────────────────────────────────────
             return {
-                # Identity
-                "ticker":         symbol,
-                "name":           name,
-                "sector":         sector,
-                "industry":       industry,
-                "currency":       currency,
-                # Price / target
-                "price":          price,
-                "target_price":   target_price,
-                "analyst_upside": analyst_upside,
-                "analyst_rec":    analyst_rec,
-                "perf_52w":       perf_52w,
-                # Market cap (in billions, rounded)
-                "market_cap_b":   round(market_cap / 1e9, 2) if market_cap else None,
-                "market_cap_raw": market_cap,
-                # Valuation
-                "forward_pe":     forward_pe,
-                "trailing_pe":    trailing_pe,
-                "peg_ratio":      peg_ratio,
-                "ev_ebitda":      ev_ebitda,
-                "price_sales":    price_sales,
-                "price_book":     price_book,
-                # Growth
-                "rev_growth_ttm":      rev_growth_yoy_ttm,
-                "eps_growth_ttm":      eps_growth_yoy_ttm,
-                "rev_accel":           rev_growth_qoq_accel,  # positive = accelerating
-                "eps_accel":           eps_growth_qoq_accel,
-                "earnings_surprise":   earnings_surprise_pct,
-                # Profitability
-                "gross_margin":    gross_margin,
+                "ticker":           symbol,
+                "name":             name,
+                "sector":           sector,
+                "industry":         industry,
+                "price":            price,
+                "target_price":     target_price,
+                "analyst_upside":   analyst_upside,
+                "analyst_rec":      analyst_rec,
+                "perf_52w":         perf_52w,
+                "market_cap_b":     round(market_cap / 1e9, 2),
+                "market_cap_raw":   market_cap,
+                "forward_pe":       forward_pe,
+                "peg_ratio":        peg_ratio,
+                "ev_ebitda":        ev_ebitda,
+                "price_sales":      price_sales,
+                "rev_growth_ttm":   rev_growth_ttm,
+                "eps_growth_ttm":   eps_growth_ttm,
+                "rev_accel":        rev_accel,
+                "eps_accel":        eps_accel,
+                "earnings_surprise":earnings_surprise,
+                "gross_margin":     gross_margin,
                 "operating_margin": operating_margin,
-                "profit_margin":   profit_margin,
-                "roe":             roe,
-                "roa":             roa,
-                "debt_equity":     debt_equity,
-                # Misc
-                "next_earnings":   next_earnings,
-                "float_pct":       float_pct,
+                "profit_margin":    profit_margin,
+                "roe":              roe,
+                "roa":              roa,
+                "debt_equity":      debt_equity,
+                "next_earnings":    next_earnings,
             }
 
         except Exception as e:
             if attempt < MAX_RETRIES:
-                print(f"    Attempt {attempt} failed for {symbol}: {e}. Retrying...")
                 time.sleep(2 ** attempt)
             else:
-                print(f"    ERROR fetching {symbol}: {e}")
+                print(f"    ERROR {symbol}: {e}")
                 return None
 
 
 # ─── Scoring ──────────────────────────────────────────────────────────────────
-#
-# Each metric scores 0–4.  Weights are applied per category, then
-# category weights are applied to get a final 0–4 score → letter grade.
-#
-# Sector adjustments: financials and utilities are excluded from D/E scoring
-# (high structural leverage); REITs use P/FFO not P/E so we skip forward_pe.
 
 FINANCIALS_SECTORS = {"Financial Services", "Financials"}
 UTILITIES_SECTORS  = {"Utilities"}
-REIT_INDUSTRIES    = {"REIT", "Real Estate Investment Trust"}
 
 def score_metric(value, thresholds, reverse=False):
-    """
-    thresholds: list of 4 breakpoints [poor_cutoff, weak, fair, good]
-                value >= thresholds[3] → 4
-                value >= thresholds[2] → 3
-                etc.
-    reverse=True: lower is better (e.g. P/E, debt)
-    Returns 0–4 (int) or None if value is None.
-    """
     if value is None:
         return None
     if reverse:
-        # Flip: high values → low scores
-        if value <= thresholds[0]:   return 4
+        if value <= thresholds[0]: return 4
         elif value <= thresholds[1]: return 3
         elif value <= thresholds[2]: return 2
         elif value <= thresholds[3]: return 1
-        else:                        return 0
+        else: return 0
     else:
-        if value >= thresholds[3]:   return 4
+        if value >= thresholds[3]: return 4
         elif value >= thresholds[2]: return 3
         elif value >= thresholds[1]: return 2
         elif value >= thresholds[0]: return 1
-        else:                        return 0
+        else: return 0
 
-
-def score_acceleration(val):
-    """Score revenue/EPS acceleration (percentage point change in YoY growth)."""
-    if val is None:
-        return None
-    if val >= 5:    return 4
-    if val >= 1:    return 3
-    if val >= -1:   return 2  # roughly stable
-    if val >= -5:   return 1
+def score_accel(val):
+    if val is None: return None
+    if val >= 5:  return 4
+    if val >= 1:  return 3
+    if val >= -1: return 2
+    if val >= -5: return 1
     return 0
-
 
 def score_analyst_rec(val):
-    """
-    yfinance recommendationMean: 1=Strong Buy, 2=Buy, 3=Hold, 4=Sell, 5=Strong Sell
-    Invert to 0–4 score.
-    """
-    if val is None:
-        return None
-    if val <= 1.5:  return 4
-    if val <= 2.2:  return 3
-    if val <= 2.8:  return 2
-    if val <= 3.5:  return 1
+    if val is None: return None
+    if val <= 1.5: return 4
+    if val <= 2.2: return 3
+    if val <= 2.8: return 2
+    if val <= 3.5: return 1
     return 0
 
-
 def score_record(raw):
-    """
-    Compute per-metric scores and a weighted overall grade for one stock.
-    Returns the raw dict augmented with scores, weighted score, and grade.
-    """
-    sector   = raw.get("sector", "")
-    industry = raw.get("industry", "")
-    is_fin   = sector in FINANCIALS_SECTORS
-    is_util  = sector in UTILITIES_SECTORS
-    is_reit  = any(r in industry for r in REIT_INDUSTRIES)
+    sector = raw.get("sector", "")
+    is_fin  = sector in FINANCIALS_SECTORS
+    is_util = sector in UTILITIES_SECTORS
+    s = {}
 
-    s = {}  # scores dict
+    # Growth
+    s["rev_growth_ttm"]  = score_metric(raw["rev_growth_ttm"],  [0, 5, 10, 20])
+    s["eps_growth_ttm"]  = score_metric(raw["eps_growth_ttm"],  [0, 5, 15, 25])
+    s["rev_accel"]       = score_accel(raw["rev_accel"])
+    s["eps_accel"]       = score_accel(raw["eps_accel"])
+    s["earnings_surprise"] = score_metric(raw["earnings_surprise"], [-5, 0, 2, 5])
 
-    # ── Growth (weight 35%) ────────────────────────────────────────────────
-    s["rev_growth_ttm"] = score_metric(
-        raw["rev_growth_ttm"], [0, 5, 10, 20])
-    s["eps_growth_ttm"] = score_metric(
-        raw["eps_growth_ttm"], [0, 5, 15, 25])
-    s["rev_accel"] = score_acceleration(raw["rev_accel"])
-    s["eps_accel"] = score_acceleration(raw["eps_accel"])
-    s["earnings_surprise"] = score_metric(
-        raw["earnings_surprise"], [-5, 0, 2, 5])
+    g_scores = [v for v in [s["rev_growth_ttm"], s["eps_growth_ttm"],
+                              s["rev_accel"], s["eps_accel"],
+                              s["earnings_surprise"]] if v is not None]
+    growth_avg = sum(g_scores) / len(g_scores) if g_scores else None
 
-    growth_scores = [s[k] for k in
-        ["rev_growth_ttm", "eps_growth_ttm", "rev_accel", "eps_accel", "earnings_surprise"]
-        if s[k] is not None]
-    growth_avg = (sum(growth_scores) / len(growth_scores)) if growth_scores else None
+    # Valuation
+    s["forward_pe"]  = score_metric(raw["forward_pe"],  [15, 20, 30, 40], reverse=True)
+    s["peg_ratio"]   = score_metric(raw["peg_ratio"],   [1, 1.5, 2.5, 3.5], reverse=True)
+    s["ev_ebitda"]   = score_metric(raw["ev_ebitda"],   [10, 15, 25, 35], reverse=True)
+    s["price_sales"] = score_metric(raw["price_sales"], [3, 6, 10, 15], reverse=True)
 
-    # ── Valuation (weight 25%) ────────────────────────────────────────────
-    # Skip forward P/E for REITs; skip D/E for financials/utilities
-    if not is_reit:
-        s["forward_pe"] = score_metric(
-            raw["forward_pe"], [15, 20, 30, 40], reverse=True)
-    else:
-        s["forward_pe"] = None
+    v_scores = [v for v in [s["forward_pe"], s["peg_ratio"],
+                              s["ev_ebitda"], s["price_sales"]] if v is not None]
+    val_avg = sum(v_scores) / len(v_scores) if v_scores else None
 
-    s["peg_ratio"] = score_metric(
-        raw["peg_ratio"], [1, 1.5, 2.5, 3.5], reverse=True)
-    s["ev_ebitda"] = score_metric(
-        raw["ev_ebitda"], [10, 15, 25, 35], reverse=True)
-    s["price_sales"] = score_metric(
-        raw["price_sales"], [3, 6, 10, 15], reverse=True)
-
-    val_scores = [s[k] for k in
-        ["forward_pe", "peg_ratio", "ev_ebitda", "price_sales"]
-        if s[k] is not None]
-    val_avg = (sum(val_scores) / len(val_scores)) if val_scores else None
-
-    # ── Profitability (weight 25%) ─────────────────────────────────────────
+    # Profitability
     s["gross_margin"]     = score_metric(raw["gross_margin"],     [10, 25, 40, 60])
     s["operating_margin"] = score_metric(raw["operating_margin"], [0, 8, 15, 25])
     s["roe"]              = score_metric(raw["roe"],              [0, 8, 15, 25])
     s["roa"]              = score_metric(raw["roa"],              [0, 3, 7, 12])
+    s["debt_equity"]      = None if (is_fin or is_util) else \
+                            score_metric(raw["debt_equity"], [0.3, 0.8, 1.5, 3.0], reverse=True)
 
-    if not is_fin and not is_util:
-        s["debt_equity"] = score_metric(
-            raw["debt_equity"], [0.3, 0.8, 1.5, 3.0], reverse=True)
-    else:
-        s["debt_equity"] = None  # not meaningful for banks/utilities
+    p_scores = [v for v in [s["gross_margin"], s["operating_margin"],
+                              s["roe"], s["roa"], s["debt_equity"]] if v is not None]
+    prof_avg = sum(p_scores) / len(p_scores) if p_scores else None
 
-    prof_scores = [s[k] for k in
-        ["gross_margin", "operating_margin", "roe", "roa", "debt_equity"]
-        if s[k] is not None]
-    prof_avg = (sum(prof_scores) / len(prof_scores)) if prof_scores else None
+    # Momentum
+    s["perf_52w"]       = score_metric(raw["perf_52w"],       [-15, 0, 15, 30])
+    s["analyst_upside"] = score_metric(raw["analyst_upside"], [0, 5, 15, 30])
+    s["analyst_rec"]    = score_analyst_rec(raw["analyst_rec"])
 
-    # ── Momentum & Sentiment (weight 15%) ─────────────────────────────────
-    s["perf_52w"]      = score_metric(raw["perf_52w"],      [-15, 0, 15, 30])
-    s["analyst_upside"]= score_metric(raw["analyst_upside"], [0, 5, 15, 30])
-    s["analyst_rec"]   = score_analyst_rec(raw["analyst_rec"])
+    m_scores = [v for v in [s["perf_52w"], s["analyst_upside"],
+                              s["analyst_rec"]] if v is not None]
+    mom_avg = sum(m_scores) / len(m_scores) if m_scores else None
 
-    mom_scores = [s[k] for k in
-        ["perf_52w", "analyst_upside", "analyst_rec"]
-        if s[k] is not None]
-    mom_avg = (sum(mom_scores) / len(mom_scores)) if mom_scores else None
-
-    # ── Weighted overall ───────────────────────────────────────────────────
-    weighted_sum   = 0
-    weighted_total = 0
-    for avg, weight in [
-        (growth_avg, 0.35),
-        (val_avg,    0.25),
-        (prof_avg,   0.25),
-        (mom_avg,    0.15),
-    ]:
+    # Weighted overall
+    weighted_sum = weighted_total = 0
+    for avg, w in [(growth_avg, 0.35), (val_avg, 0.25),
+                   (prof_avg, 0.25), (mom_avg, 0.15)]:
         if avg is not None:
-            weighted_sum   += avg * weight
-            weighted_total += weight
+            weighted_sum   += avg * w
+            weighted_total += w
 
     overall = round(weighted_sum / weighted_total, 3) if weighted_total > 0 else None
 
-    # ── Letter grade ───────────────────────────────────────────────────────
     grade = "-"
-    grade_color = "neutral"
     if overall is not None:
-        if overall >= 3.3:
-            grade, grade_color = "A", "grade-a"
-        elif overall >= 2.6:
-            grade, grade_color = "B", "grade-b"
-        elif overall >= 1.9:
-            grade, grade_color = "C", "grade-c"
-        elif overall >= 1.2:
-            grade, grade_color = "D", "grade-d"
-        else:
-            grade, grade_color = "F", "grade-f"
+        if overall >= 3.3:   grade = "A"
+        elif overall >= 2.6: grade = "B"
+        elif overall >= 1.9: grade = "C"
+        elif overall >= 1.2: grade = "D"
+        else:                grade = "F"
+
+    grade_color = {"A":"grade-a","B":"grade-b","C":"grade-c",
+                   "D":"grade-d","F":"grade-f"}.get(grade, "neutral")
 
     return {
         **raw,
-        "scores":       s,
-        "growth_avg":   round(growth_avg, 2) if growth_avg is not None else None,
-        "val_avg":      round(val_avg,    2) if val_avg    is not None else None,
-        "prof_avg":     round(prof_avg,   2) if prof_avg   is not None else None,
-        "mom_avg":      round(mom_avg,    2) if mom_avg    is not None else None,
-        "overall":      overall,
-        "grade":        grade,
-        "grade_color":  grade_color,
+        "scores":      s,
+        "growth_avg":  round(growth_avg, 2) if growth_avg is not None else None,
+        "val_avg":     round(val_avg,    2) if val_avg    is not None else None,
+        "prof_avg":    round(prof_avg,   2) if prof_avg   is not None else None,
+        "mom_avg":     round(mom_avg,    2) if mom_avg    is not None else None,
+        "overall":     overall,
+        "grade":       grade,
+        "grade_color": grade_color,
     }
 
 
 # ─── Format helpers ───────────────────────────────────────────────────────────
 
-def fmt_pct(val, decimals=1):
-    if val is None:
-        return None
-    return f"{val:+.{decimals}f}%"
+def fmt_pct(val, d=1):
+    return f"{val:+.{d}f}%" if val is not None else None
 
-def fmt_num(val, decimals=1):
-    if val is None:
-        return None
-    return f"{val:.{decimals}f}x"
+def fmt_num(val, d=1):
+    return f"{val:.{d}f}x" if val is not None else None
 
-def fmt_cap(val_b):
-    if val_b is None:
-        return None
-    if val_b >= 1000:
-        return f"${val_b/1000:.2f}T"
-    return f"${val_b:.1f}B"
+def fmt_cap(b):
+    if b is None: return None
+    return f"${b/1000:.2f}T" if b >= 1000 else f"${b:.1f}B"
 
 def fmt_price(val):
-    if val is None:
-        return None
-    return f"${val:,.2f}"
-
+    return f"${val:,.2f}" if val is not None else None
 
 def format_record(rec):
-    """Convert raw numeric values into display strings for the frontend."""
     r = rec
     return {
-        # Identity
         "ticker":           r["ticker"],
         "name":             r["name"],
         "sector":           r["sector"],
         "industry":         r["industry"],
-        # Grade
         "grade":            r["grade"],
         "grade_color":      r["grade_color"],
         "overall":          r["overall"],
@@ -606,85 +539,292 @@ def format_record(rec):
         "val_avg":          r["val_avg"],
         "prof_avg":         r["prof_avg"],
         "mom_avg":          r["mom_avg"],
-        # Display values
         "market_cap":       fmt_cap(r["market_cap_b"]),
+        "market_cap_b":     r["market_cap_b"],
         "price":            fmt_price(r["price"]),
+        "price_raw":        r["price"],
         "target_price":     fmt_price(r["target_price"]),
         "analyst_upside":   fmt_pct(r["analyst_upside"]),
         "analyst_rec_raw":  r["analyst_rec"],
         "perf_52w":         fmt_pct(r["perf_52w"]),
-        "forward_pe":       fmt_num(r["forward_pe"]) if r["forward_pe"] else None,
-        "peg_ratio":        fmt_num(r["peg_ratio"])  if r["peg_ratio"]  else None,
-        "ev_ebitda":        fmt_num(r["ev_ebitda"])  if r["ev_ebitda"]  else None,
-        "price_sales":      fmt_num(r["price_sales"]) if r["price_sales"] else None,
+        "forward_pe":       fmt_num(r["forward_pe"]),
+        "peg_ratio":        fmt_num(r["peg_ratio"]),
+        "ev_ebitda":        fmt_num(r["ev_ebitda"]),
+        "price_sales":      fmt_num(r["price_sales"]),
         "rev_growth_ttm":   fmt_pct(r["rev_growth_ttm"]),
         "eps_growth_ttm":   fmt_pct(r["eps_growth_ttm"]),
-        "rev_accel":        fmt_pct(r["rev_accel"])  if r["rev_accel"] is not None else None,
-        "eps_accel":        fmt_pct(r["eps_accel"])  if r["eps_accel"] is not None else None,
+        "rev_accel":        fmt_pct(r["rev_accel"]),
+        "eps_accel":        fmt_pct(r["eps_accel"]),
         "earnings_surprise":fmt_pct(r["earnings_surprise"]),
-        "gross_margin":     fmt_pct(r["gross_margin"], 1),
-        "operating_margin": fmt_pct(r["operating_margin"], 1),
-        "profit_margin":    fmt_pct(r["profit_margin"], 1),
-        "roe":              fmt_pct(r["roe"], 1),
-        "roa":              fmt_pct(r["roa"], 1),
-        "debt_equity":      fmt_num(r["debt_equity"], 2) if r["debt_equity"] is not None else None,
+        "gross_margin":     fmt_pct(r["gross_margin"]),
+        "operating_margin": fmt_pct(r["operating_margin"]),
+        "profit_margin":    fmt_pct(r["profit_margin"]),
+        "roe":              fmt_pct(r["roe"]),
+        "roa":              fmt_pct(r["roa"]),
+        "debt_equity":      fmt_num(r["debt_equity"], 2),
         "next_earnings":    r["next_earnings"],
-        # Raw scores (for tooltip/detail)
         "scores":           r["scores"],
     }
+
+
+# ─── Portfolio management ─────────────────────────────────────────────────────
+
+def load_portfolio():
+    p = Path(PORTFOLIO_FILE)
+    if p.exists():
+        return json.loads(p.read_text())
+    return None
+
+def save_portfolio(portfolio):
+    Path(PORTFOLIO_FILE).write_text(json.dumps(portfolio, indent=2, default=str))
+
+def get_sp500_history(start_date):
+    """Fetch SPY price history from start_date to today for benchmark."""
+    try:
+        spy = yf.Ticker("SPY")
+        hist = spy.history(start=start_date, auto_adjust=True)
+        if hist.empty:
+            return []
+        start_price = float(hist["Close"].iloc[0])
+        result = []
+        for dt, row in hist.iterrows():
+            result.append({
+                "date":  dt.strftime("%Y-%m-%d"),
+                "value": round(PORTFOLIO_START * float(row["Close"]) / start_price, 2)
+            })
+        return result
+    except Exception as e:
+        print(f"  WARNING: Could not fetch SPY history: {e}")
+        return []
+
+def update_portfolio(records, portfolio):
+    """
+    Given current stock records and existing portfolio state,
+    buy/sell based on grade thresholds and update holdings.
+    Returns updated portfolio dict.
+    """
+    today_str = date.today().isoformat()
+
+    # Build lookup by ticker
+    stock_map = {r["ticker"]: r for r in records}
+
+    holdings  = portfolio.get("holdings", {})
+    cash      = portfolio.get("cash", PORTFOLIO_START)
+    history   = portfolio.get("history", [])
+    trades    = portfolio.get("trades", [])
+
+    # ── Step 1: Sell anything that fell below threshold ────────────────────
+    to_sell = []
+    for ticker, pos in holdings.items():
+        stock = stock_map.get(ticker)
+        if stock is None:
+            to_sell.append(ticker)   # no longer in universe
+            continue
+        overall = stock.get("overall")
+        if overall is None or overall < SELL_THRESHOLD:
+            to_sell.append(ticker)
+
+    for ticker in to_sell:
+        pos   = holdings[ticker]
+        stock = stock_map.get(ticker)
+        price = stock["price_raw"] if stock else pos.get("last_price", pos["cost_basis"])
+        if price is None:
+            price = pos.get("last_price", pos["cost_basis"])
+        proceeds = pos["shares"] * price
+        cash += proceeds
+        gain_pct = round((price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2) \
+                   if pos["cost_basis"] else 0
+        trades.append({
+            "date":      today_str,
+            "action":    "SELL",
+            "ticker":    ticker,
+            "shares":    pos["shares"],
+            "price":     round(price, 2),
+            "proceeds":  round(proceeds, 2),
+            "gain_pct":  gain_pct,
+        })
+        print(f"    SELL {ticker}: {pos['shares']:.4f} sh @ ${price:.2f}  gain={gain_pct:+.1f}%")
+        del holdings[ticker]
+
+    # ── Step 2: Determine buy candidates ──────────────────────────────────
+    buy_candidates = [
+        r for r in records
+        if r.get("overall") is not None
+        and r["overall"] >= BUY_THRESHOLD
+        and r["ticker"] not in holdings
+        and r.get("price_raw") is not None
+        and r["price_raw"] > 0
+    ]
+
+    # Weight by overall score (proportional)
+    if buy_candidates:
+        total_score = sum(r["overall"] for r in buy_candidates)
+        # Also include existing holdings in the allocation pool
+        existing_tickers = list(holdings.keys())
+        existing_scores  = [
+            stock_map[t]["overall"]
+            for t in existing_tickers
+            if stock_map.get(t) and stock_map[t].get("overall") is not None
+        ]
+        all_scores = [r["overall"] for r in buy_candidates] + existing_scores
+        total_score_all = sum(all_scores)
+
+        # Target portfolio value (current holdings MV + cash)
+        holdings_mv = sum(
+            h["shares"] * (stock_map[t]["price_raw"] if stock_map.get(t) and
+                           stock_map[t].get("price_raw") else h["last_price"])
+            for t, h in holdings.items()
+        )
+        total_portfolio = holdings_mv + cash
+
+        # Buy each new candidate up to its target weight
+        for r in buy_candidates:
+            weight       = r["overall"] / total_score_all
+            target_value = total_portfolio * weight
+            price        = r["price_raw"]
+            if price is None or price <= 0:
+                continue
+            affordable = min(target_value, cash * 0.98)   # leave 2% buffer
+            if affordable < price:
+                continue   # can't afford even 1 share
+            shares = affordable / price
+            cost   = shares * price
+            cash  -= cost
+            holdings[r["ticker"]] = {
+                "shares":      round(shares, 6),
+                "cost_basis":  round(price, 4),
+                "last_price":  round(price, 4),
+                "bought_date": today_str,
+            }
+            trades.append({
+                "date":    today_str,
+                "action":  "BUY",
+                "ticker":  r["ticker"],
+                "shares":  round(shares, 6),
+                "price":   round(price, 2),
+                "cost":    round(cost, 2),
+            })
+            print(f"    BUY  {r['ticker']}: {shares:.4f} sh @ ${price:.2f}")
+
+    # ── Step 3: Update last prices for all holdings ────────────────────────
+    holdings_mv = 0
+    for ticker, pos in holdings.items():
+        stock = stock_map.get(ticker)
+        if stock and stock.get("price_raw"):
+            pos["last_price"] = round(stock["price_raw"], 4)
+        holdings_mv += pos["shares"] * pos["last_price"]
+
+    total_value = holdings_mv + cash
+
+    # ── Step 4: Append today's portfolio value to history ─────────────────
+    # Avoid duplicate date entries
+    if not history or history[-1]["date"] != today_str:
+        history.append({
+            "date":  today_str,
+            "value": round(total_value, 2),
+            "cash":  round(cash, 2),
+        })
+
+    portfolio.update({
+        "holdings":    holdings,
+        "cash":        round(cash, 2),
+        "total_value": round(total_value, 2),
+        "history":     history,
+        "trades":      trades,
+        "updated_at":  today_str,
+    })
+
+    return portfolio
+
+def init_portfolio(records):
+    """Create a fresh portfolio from current records."""
+    today_str    = date.today().isoformat()
+    print(f"  Initialising new portfolio on {today_str} with ${PORTFOLIO_START:,.0f}")
+
+    # Fetch SPY history from today (will just be 1 point at start)
+    spy_history = get_sp500_history(today_str)
+
+    portfolio = {
+        "start_date":   today_str,
+        "start_value":  PORTFOLIO_START,
+        "cash":         PORTFOLIO_START,
+        "holdings":     {},
+        "history":      [],
+        "spy_history":  spy_history,
+        "trades":       [],
+        "updated_at":   today_str,
+    }
+    portfolio = update_portfolio(records, portfolio)
+
+    # Extend spy history to cover full period on future runs
+    # (history starts today so spy_history also starts today)
+    return portfolio
+
+def refresh_spy_history(portfolio):
+    """Extend SPY benchmark history to today."""
+    start = portfolio.get("start_date", date.today().isoformat())
+    spy_h = get_sp500_history(start)
+    if spy_h:
+        portfolio["spy_history"] = spy_h
+    return portfolio
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     start_time = datetime.now(timezone.utc)
-    print(f"=== Stock Tracker v2 | {start_time.strftime('%Y-%m-%d %H:%M UTC')} ===\n")
+    print(f"=== Stock Tracker v3 | {start_time.strftime('%Y-%m-%d %H:%M UTC')} ===\n")
 
     tickers = get_ticker_universe()
-    print(f"\nProcessing {len(tickers)} tickers (dropping those <${MIN_MARKET_CAP_B}B)...\n")
+    print(f"\nProcessing {len(tickers)} tickers...\n")
 
-    records  = []
-    skipped  = 0
-    errors   = 0
+    records = []
+    skipped = errors = 0
 
     for i, symbol in enumerate(tickers, 1):
         print(f"  [{i:>3}/{len(tickers)}] {symbol:<8}", end=" ", flush=True)
         try:
             raw = fetch_ticker_data(symbol)
             if raw is None:
-                print("skip (below cap or no data)")
+                print("skip")
                 skipped += 1
             else:
                 scored    = score_record(raw)
                 formatted = format_record(scored)
                 records.append(formatted)
-                cap = raw.get("market_cap_b") or 0
-                print(f"✓  {raw['name'][:35]:<35} {fmt_cap(cap):>8}  grade={scored['grade']}")
+                print(f"✓ {raw['name'][:32]:<32} {fmt_cap(raw['market_cap_b']):>8}  "
+                      f"grade={scored['grade']}({scored['overall'] or '-'})")
         except Exception as e:
             print(f"ERROR: {e}")
-            traceback.print_exc()
             errors += 1
-
         time.sleep(DELAY_BETWEEN)
 
-    # Sort by overall score descending, then ticker ascending
     records.sort(key=lambda x: (-(x["overall"] or -99), x["ticker"]))
 
     end_time = datetime.now(timezone.utc)
-    output = {
+    out = {
         "generated_at": end_time.strftime("%Y-%m-%d %H:%M UTC"),
         "total":        len(records),
-        "min_cap_b":    MIN_MARKET_CAP_B,
         "stocks":       records,
     }
+    Path(OUTPUT_FILE).write_text(json.dumps(out, indent=2, default=str))
 
-    Path(OUTPUT_FILE).write_text(json.dumps(output, indent=2, default=str))
+    # ── Portfolio ──────────────────────────────────────────────────────────
+    print("\n── Portfolio update ──────────────────────────────────────────────")
+    portfolio = load_portfolio()
+    if portfolio is None:
+        portfolio = init_portfolio(records)
+    else:
+        portfolio = refresh_spy_history(portfolio)
+        portfolio = update_portfolio(records, portfolio)
+    save_portfolio(portfolio)
+
     print(f"\n=== Done ===")
-    print(f"  Kept:    {len(records)}")
-    print(f"  Skipped: {skipped}")
-    print(f"  Errors:  {errors}")
-    print(f"  Runtime: {(end_time - start_time).seconds // 60}m {(end_time - start_time).seconds % 60}s")
-    print(f"  Output:  {OUTPUT_FILE}")
+    print(f"  Stocks:  {len(records)} kept, {skipped} skipped, {errors} errors")
+    print(f"  Runtime: {(end_time-start_time).seconds//60}m {(end_time-start_time).seconds%60}s")
+    holdings_count = len(portfolio.get("holdings", {}))
+    print(f"  Portfolio: ${portfolio['total_value']:,.0f} | "
+          f"{holdings_count} holdings | ${portfolio['cash']:,.0f} cash")
 
 
 if __name__ == "__main__":
