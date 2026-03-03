@@ -182,12 +182,17 @@ def fetch_ticker_data(symbol):
                 debt_equity = round(debt_equity / 100, 3)
 
             # ── Growth fallbacks from info ─────────────────────────────────
-            # Treat 0.0 as None — yfinance returns 0.0 (not None) for many
-            # tickers where the field is actually unavailable (e.g. NVDA).
-            _rg = info.get("revenueGrowth")
-            _eg = info.get("earningsGrowth")
-            rev_growth_info = safe_pct(_rg) if (_rg is not None and _rg != 0.0) else None
-            eps_growth_info = safe_pct(_eg) if (_eg is not None and _eg != 0.0) else None
+            # yfinance info.revenueGrowth/earningsGrowth = single-quarter YoY.
+            # Treat 0.0 AND values within ±0.15% as missing — yfinance returns
+            # near-zero floats as a sentinel for unavailable data on many tickers.
+            def _info_growth(raw_val):
+                v = safe(raw_val)
+                if v is None or abs(v) < 0.0015:   # ±0.15% sentinel threshold
+                    return None
+                return round(v * 100, 2)
+
+            rev_growth_info = _info_growth(info.get("revenueGrowth"))
+            eps_growth_info = _info_growth(info.get("earningsGrowth"))
 
             # ── Quarterly financials ───────────────────────────────────────
             rev_growth_ttm = None
@@ -203,18 +208,14 @@ def fetch_ticker_data(symbol):
                     q_inc = q_inc.sort_index(axis=1, ascending=False)
                     nq    = q_inc.shape[1]
 
-                    def get_row(df, *names):
-                        """Find a row by name; fall back to any row containing 'revenue'."""
-                        for n in names:
+                    # ── Row finders ────────────────────────────────────────
+                    def get_rev_row(df):
+                        """Revenue row — explicit names only (avoid 'Cost of Revenue')."""
+                        for n in ["Total Revenue", "Revenue", "Net Revenue",
+                                  "Operating Revenue", "Total Net Revenue"]:
                             if n in df.index:
                                 try:
                                     return df.loc[n].astype(float)
-                                except Exception:
-                                    pass
-                        for idx in df.index:
-                            if "revenue" in str(idx).lower():
-                                try:
-                                    return df.loc[idx].astype(float)
                                 except Exception:
                                     pass
                         return None
@@ -229,8 +230,8 @@ def fetch_ticker_data(symbol):
                                     pass
                         return None
 
+                    # ── Safe scalar from Series ────────────────────────────
                     def sv(series, i):
-                        """Safe scalar: return float or None (handles NaN)."""
                         if i >= len(series):
                             return None
                         try:
@@ -239,40 +240,61 @@ def fetch_ticker_data(symbol):
                         except Exception:
                             return None
 
-                    def safe_sum(series, start, end):
-                        """Sum a slice; return None if too many NaNs."""
-                        sl = series.iloc[start:end].dropna()
-                        needed = end - start
-                        if len(sl) < needed - 1:   # allow at most 1 missing
+                    # ── Sum a slice, requiring ALL values present ──────────
+                    # (no NaN tolerance — partial sums vs full-year bases give
+                    #  false growth rates, which is worse than showing None)
+                    def full_sum(series, start, end):
+                        sl = series.iloc[start:end]
+                        if sl.isna().any():
                             return None
                         return float(sl.sum())
 
-                    rev_q = get_row(q_inc, "Total Revenue", "Revenue",
-                                    "Net Revenue", "Operating Revenue",
-                                    "Total Net Revenue")
+                    # ── Growth from two values, None-safe ─────────────────
+                    def pct_chg(new, old):
+                        if new is None or old is None or old == 0:
+                            return None
+                        return round((new - old) / abs(old) * 100, 2)
+
+                    rev_q = get_rev_row(q_inc)
                     eps_q = get_eps_row(q_inc)
 
                     # ── TTM revenue growth ─────────────────────────────────
-                    if rev_q is not None:
-                        ttm = safe_sum(rev_q, 0, 4)
+                    # Primary: 8 quarter comparison (TTM vs prior TTM)
+                    # Fallback: TTM vs annual — but ONLY use the annual whose
+                    # period-end date is BEFORE our TTM window starts, to avoid
+                    # comparing a fiscal year to itself (the NVDA/BKNG/MCO bug).
+                    if rev_q is not None and nq >= 4:
+                        ttm = full_sum(rev_q, 0, 4)
                         if ttm is not None:
                             if nq >= 8:
-                                prev = safe_sum(rev_q, 4, 8)
-                                if prev and prev != 0:
-                                    rev_growth_ttm = round(
-                                        (ttm - prev) / abs(prev) * 100, 2)
+                                prev = full_sum(rev_q, 4, 8)
+                                rev_growth_ttm = pct_chg(ttm, prev)
+
                             if rev_growth_ttm is None and a_inc is not None \
                                     and not a_inc.empty:
                                 a_s   = a_inc.sort_index(axis=1, ascending=False)
-                                rev_a = get_row(a_s, "Total Revenue", "Revenue",
-                                                "Net Revenue", "Operating Revenue")
-                                if rev_a is not None and len(rev_a) >= 1:
-                                    prior = sv(rev_a, 0)
-                                    if prior and prior != 0:
-                                        rev_growth_ttm = round(
-                                            (ttm - prior) / abs(prior) * 100, 2)
+                                rev_a = get_rev_row(a_s)
+                                if rev_a is not None:
+                                    # TTM ends at the most recent quarter date;
+                                    # TTM starts approximately 1 year before that.
+                                    ttm_end   = q_inc.columns[0]   # newest quarter date
+                                    ttm_start = q_inc.columns[3]   # oldest quarter in TTM
+
+                                    # Walk annual columns to find the first one
+                                    # whose date is strictly before ttm_start.
+                                    # This ensures we never compare TTM to a year
+                                    # that overlaps with our TTM window.
+                                    prior = None
+                                    for col_i, col_date in enumerate(a_s.columns):
+                                        if col_date < ttm_start:
+                                            prior = sv(rev_a, col_i)
+                                            break
+
+                                    rev_growth_ttm = pct_chg(ttm, prior)
 
                     # ── Revenue acceleration ───────────────────────────────
+                    # Q0 YoY vs Q1 YoY — need year-ago quarter values.
+                    # Prefer exact year-ago quarters (nq>=5/6); annual/4 fallback.
                     if rev_q is not None and nq >= 2:
                         q0    = sv(rev_q, 0)
                         q1    = sv(rev_q, 1)
@@ -282,8 +304,7 @@ def fetch_ticker_data(symbol):
                         if (q0_ya is None or q1_ya is None) \
                                 and a_inc is not None and not a_inc.empty:
                             a_s   = a_inc.sort_index(axis=1, ascending=False)
-                            rev_a = get_row(a_s, "Total Revenue", "Revenue",
-                                            "Net Revenue", "Operating Revenue")
+                            rev_a = get_rev_row(a_s)
                             if rev_a is not None and len(rev_a) >= 2:
                                 yr0 = sv(rev_a, 0)
                                 yr1 = sv(rev_a, 1)
@@ -292,30 +313,32 @@ def fetch_ticker_data(symbol):
                                 if q1_ya is None and yr1:
                                     q1_ya = yr1 / 4
 
-                        if q0 and q1 and q0_ya and q1_ya \
+                        if all(v is not None for v in [q0, q1, q0_ya, q1_ya]) \
                                 and q0_ya != 0 and q1_ya != 0:
                             yoy0 = (q0 - q0_ya) / abs(q0_ya) * 100
                             yoy1 = (q1 - q1_ya) / abs(q1_ya) * 100
                             rev_accel = round(yoy0 - yoy1, 2)
 
                     # ── EPS TTM growth ─────────────────────────────────────
-                    if eps_q is not None:
-                        ttm_e = safe_sum(eps_q, 0, 4)
+                    if eps_q is not None and nq >= 4:
+                        ttm_e = full_sum(eps_q, 0, 4)
                         if ttm_e is not None:
                             if nq >= 8:
-                                prev_e = safe_sum(eps_q, 4, 8)
-                                if prev_e and prev_e != 0:
-                                    eps_growth_ttm = round(
-                                        (ttm_e - prev_e) / abs(prev_e) * 100, 2)
+                                prev_e = full_sum(eps_q, 4, 8)
+                                eps_growth_ttm = pct_chg(ttm_e, prev_e)
+
                             if eps_growth_ttm is None and a_inc is not None \
                                     and not a_inc.empty:
                                 a_s   = a_inc.sort_index(axis=1, ascending=False)
                                 eps_a = get_eps_row(a_s)
-                                if eps_a is not None and len(eps_a) >= 1:
-                                    prior_e = sv(eps_a, 0)
-                                    if prior_e and prior_e != 0:
-                                        eps_growth_ttm = round(
-                                            (ttm_e - prior_e) / abs(prior_e) * 100, 2)
+                                if eps_a is not None:
+                                    ttm_start = q_inc.columns[3]
+                                    prior_e   = None
+                                    for col_i, col_date in enumerate(a_s.columns):
+                                        if col_date < ttm_start:
+                                            prior_e = sv(eps_a, col_i)
+                                            break
+                                    eps_growth_ttm = pct_chg(ttm_e, prior_e)
 
                     # ── EPS acceleration ───────────────────────────────────
                     if eps_q is not None and nq >= 2:
@@ -336,7 +359,7 @@ def fetch_ticker_data(symbol):
                                 if e1_ya is None and yr1:
                                     e1_ya = yr1 / 4
 
-                        if e0 and e1 and e0_ya and e1_ya \
+                        if all(v is not None for v in [e0, e1, e0_ya, e1_ya]) \
                                 and e0_ya != 0 and e1_ya != 0:
                             yoy0 = (e0 - e0_ya) / abs(e0_ya) * 100
                             yoy1 = (e1 - e1_ya) / abs(e1_ya) * 100
@@ -345,11 +368,12 @@ def fetch_ticker_data(symbol):
             except Exception as e:
                 print(f"    [growth calc error {symbol}]: {e}")
 
-            # Apply info-level fallbacks
+            # Apply info-level fallbacks (only if quarterly calc produced nothing)
             if rev_growth_ttm is None:
                 rev_growth_ttm = rev_growth_info
             if eps_growth_ttm is None:
                 eps_growth_ttm = eps_growth_info
+
 
             # ── PEG: manual fallback if yfinance pegRatio is None ─────────
             # PEG = Forward P/E  /  expected EPS growth rate (as %)
