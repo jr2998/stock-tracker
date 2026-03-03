@@ -24,48 +24,84 @@ DELAY_BETWEEN    = 1.0         # seconds between tickers (be polite to Yahoo)
 MAX_RETRIES      = 3
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
-
-# yfinance has no built-in screener, so we use a curated list of large/mega
-# cap US tickers supplemented by the S&P 500 + S&P 400 constituent lists.
-# At runtime we fetch each ticker and keep those with market cap >$20B.
 #
-# The most reliable free approach: download the S&P 500 + S&P 400 lists from
-# Wikipedia (stable URLs), deduplicate, then filter by market cap after fetch.
+# Static list of S&P 500 constituents (as of early 2025).
+# Wikipedia blocks requests from GitHub Actions (403), so we embed the list
+# directly. The scraper then filters to >$20B market cap at fetch time.
+# Update this list periodically as the index composition changes.
+
+SP500_TICKERS = [
+    "A","AAPL","ABBV","ABNB","ABT","ACGL","ACN","ADBE","ADI","ADM","ADP","ADSK",
+    "AEE","AEP","AES","AFL","AIG","AIZ","AJG","AKAM","ALB","ALGN","ALL","ALLE",
+    "AMAT","AMCR","AMD","AME","AMGN","AMP","AMT","AMZN","ANET","ANSS","AON","AOS",
+    "APA","APD","APH","APTV","ARE","ATO","AVB","AVGO","AVY","AWK","AXON","AXP",
+    "AZO","BA","BAC","BALL","BAX","BBWI","BBY","BDX","BEN","BF-B","BG","BIIB",
+    "BK","BKNG","BKR","BLK","BMY","BR","BRK-B","BRO","BSX","BWA","BX",
+    "C","CAG","CAH","CARR","CAT","CB","CBOE","CBRE","CCI","CCL","CDNS","CDW",
+    "CE","CEG","CF","CFG","CHD","CHRW","CHTR","CI","CINF","CL","CLX","CMA",
+    "CMCSA","CME","CMG","CMI","CMS","CNC","CNP","COF","COO","COP","COR","COST",
+    "CPAY","CPB","CPRT","CPT","CRL","CRM","CSCO","CSGP","CSX","CTAS","CTLT",
+    "CTRA","CTSH","CTVA","CVS","CVX","CZR",
+    "D","DAL","DAY","DD","DE","DECK","DFS","DG","DGX","DHI","DHR","DIS","DLR",
+    "DLTR","DOC","DOV","DOW","DPZ","DRI","DTE","DUK","DVA","DVN","DXCM",
+    "EA","EBAY","ECL","ED","EFX","EG","EIX","EL","ELV","EMN","EMR","ENPH",
+    "EOG","EPAM","EQIX","EQR","EQT","ES","ESS","ETN","ETR","EVRG","EW","EXC",
+    "EXPD","EXPE","EXR",
+    "F","FANG","FAST","FCX","FDS","FDX","FE","FFIV","FI","FICO","FIS","FITB",
+    "FLT","FMC","FOX","FOXA","FRT","FSLR","FTNT","FTV",
+    "GD","GDDY","GE","GEHC","GEN","GEV","GILD","GIS","GL","GLW","GM","GNRC",
+    "GOOGL","GPC","GPN","GPS","GS","GWW",
+    "HAL","HAS","HBAN","HCA","HD","HES","HIG","HII","HLT","HOLX","HON","HPE",
+    "HPQ","HRL","HSIC","HST","HSY","HUBB","HUM","HWM",
+    "IBM","ICE","IDXX","IEX","IFF","ILMN","INCY","INTC","INTU","INVH","IP",
+    "IPG","IQV","IR","IRM","ISRG","IT","ITW","IVZ",
+    "J","JBHT","JBL","JCI","JKHY","JNJ","JNPR","JPM",
+    "K","KDP","KEY","KEYS","KHC","KIM","KLAC","KMB","KMI","KMX","KO","KR",
+    "L","LDOS","LEN","LH","LHX","LIN","LKQ","LLY","LMT","LNT","LOW","LRCX",
+    "LULU","LUV","LVS","LW","LYB","LYV",
+    "MA","MAA","MAR","MAS","MCD","MCHP","MCK","MCO","MDLZ","MDT","MET","META",
+    "MGM","MHK","MKC","MKTX","MLM","MMC","MMM","MNST","MO","MOH","MOS","MPC",
+    "MPWR","MRK","MRNA","MRO","MS","MSCI","MSFT","MSI","MTB","MTD","MU",
+    "NCLH","NDAQ","NEE","NEM","NFLX","NI","NKE","NOC","NOW","NRG","NSC","NTAP",
+    "NTRS","NUE","NVDA","NVR","NWS","NWSA",
+    "ODFL","OKE","OMC","ON","ORCL","ORLY","OXY",
+    "PANW","PARA","PAYC","PAYX","PCAR","PCG","PEG","PEP","PFE","PFG","PG",
+    "PGR","PH","PHM","PKG","PLD","PM","PNC","PNR","PNW","PODD","POOL","PPG",
+    "PPL","PRU","PSA","PSX","PTC","PWR","PYPL",
+    "QCOM","QRVO",
+    "RCL","REG","REGN","RF","RJF","RL","RMD","ROK","ROL","ROP","ROST","RSG",
+    "RTX",
+    "SBAC","SBUX","SCHW","SHW","SJM","SLB","SMCI","SNA","SNPS","SO","SPG",
+    "SPGI","SRE","STE","STLD","STT","STX","STZ","SWK","SWKS","SYF","SYK","SYY",
+    "T","TAP","TDG","TDY","TECH","TEL","TER","TFC","TFX","TGT","TJX","TMO",
+    "TMUS","TPR","TRGP","TRMB","TROW","TRV","TSCO","TSLA","TSN","TT","TTWO",
+    "TXN","TXT","TYL",
+    "UAL","UDR","UHS","ULTA","UNH","UNP","UPS","URI","USB",
+    "V","VFC","VICI","VLO","VLTO","VMC","VRSK","VRSN","VRTX","VTR","VTRS","VZ",
+    "WAB","WAT","WBA","WBD","WDC","WEC","WELL","WFC","WM","WMB","WMT","WRB",
+    "WRK","WST","WTW","WY","WYNN",
+    "XEL","XOM","XYL",
+    "YUM",
+    "ZBH","ZBRA","ZTS",
+]
+
+# Additional large-cap tickers not in S&P 500 but commonly >$20B
+EXTRA_TICKERS = [
+    "ABNB","ARM","AXON","COIN","CRWD","DDOG","DASH","DUOL","EXAS","HOOD",
+    "MELI","NTNX","OKTA","PANW","PATH","PLTR","RBLX","RIVN","SHOP","SMCI",
+    "SNOW","SOFI","SPOT","SQ","TTD","UBER","VEEV","ZM","ZS",
+]
 
 def get_ticker_universe():
     """
-    Pull S&P 500 + S&P 400 tickers from Wikipedia tables.
-    Returns a sorted list of unique ticker symbols.
+    Return the combined S&P 500 + extra large-cap ticker list.
+    Uses a static embedded list to avoid external HTTP dependencies in CI.
+    The scraper filters to >$20B market cap at fetch time.
     """
-    print("Fetching ticker universe from Wikipedia...")
-    dfs = []
-    urls = [
-        "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-        "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
-    ]
-    for url in urls:
-        try:
-            tables = pd.read_html(url)
-            # First table on both pages has Symbol in first or second column
-            df = tables[0]
-            # Find the Symbol column
-            sym_col = None
-            for col in df.columns:
-                if str(col).lower() in ("symbol", "ticker"):
-                    sym_col = col
-                    break
-            if sym_col is None:
-                sym_col = df.columns[0]
-            tickers = df[sym_col].dropna().astype(str).tolist()
-            tickers = [t.replace(".", "-") for t in tickers]  # BRK.B -> BRK-B
-            dfs.extend(tickers)
-            print(f"  {url.split('wiki/')[1]}: {len(tickers)} tickers")
-        except Exception as e:
-            print(f"  WARNING: Failed to fetch {url}: {e}")
-
-    unique = sorted(set(dfs))
-    print(f"  Total unique tickers: {len(unique)}")
-    return unique
+    combined = sorted(set(SP500_TICKERS + EXTRA_TICKERS))
+    print(f"Ticker universe: {len(combined)} tickers (S&P 500 + extras)")
+    print(f"  Will filter to >${MIN_MARKET_CAP_B}B market cap during fetch")
+    return combined
 
 
 # ─── Safe helpers ─────────────────────────────────────────────────────────────
