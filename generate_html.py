@@ -172,11 +172,11 @@ def build_html(data, portfolio):
 
   <div class="legend">
     <span class="legend-label">Grade:</span>
-    <div class="legend-item"><span class="gb grade-a">A</span><span>3.3–4.0 Exceptional</span></div>
-    <div class="legend-item"><span class="gb grade-b">B</span><span>2.6–3.2 Good</span></div>
-    <div class="legend-item"><span class="gb grade-c">C</span><span>1.9–2.5 Average</span></div>
-    <div class="legend-item"><span class="gb grade-d">D</span><span>1.2–1.8 Weak</span></div>
-    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;1.2 Poor</span></div>
+    <div class="legend-item"><span class="gb grade-a">A</span><span>90–100 Exceptional</span></div>
+    <div class="legend-item"><span class="gb grade-b">B</span><span>80–89 Good</span></div>
+    <div class="legend-item"><span class="gb grade-c">C</span><span>70–79 Average</span></div>
+    <div class="legend-item"><span class="gb grade-d">D</span><span>60–69 Weak</span></div>
+    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;60 Poor</span></div>
   </div>
 
   <div class="controls">
@@ -230,10 +230,11 @@ def build_html(data, portfolio):
         <th data-col="roa">ROA</th>
         <th data-col="debt_equity">D/E</th>
         <th data-col="analyst_upside" class="sec">Analyst ↑</th>
+        <th data-col="analyst_rec_label">Consensus</th>
         <th data-col="target_price">Target</th>
         <th data-col="next_earnings">Earnings</th>
       </tr></thead>
-      <tbody id="tbl-body"><tr><td colspan="25" class="empty"><span>⟳</span>Loading…</td></tr></tbody>
+      <tbody id="tbl-body"><tr><td colspan="26" class="empty"><span>⟳</span>Loading…</td></tr></tbody>
     </table>
   </div>
   <div class="footer">
@@ -248,7 +249,7 @@ def build_html(data, portfolio):
 <div class="page" id="page-performance">
   <div style="margin-top:24px;margin-bottom:22px">
     <div class="section-title">Performance Tracker</div>
-    <div class="section-sub">// Simulated portfolio · Buys grades ≥3.0 · Sells grades &lt;2.9 · Started <span id="port-start-date">—</span></div>
+    <div class="section-sub">// Simulated portfolio · Buys scores ≥70 · Sells scores &lt;65 · Started <span id="port-start-date">—</span></div>
   </div>
 
   <!-- KPI Cards -->
@@ -374,15 +375,15 @@ function fmtPct(v, plus=true) {{
 }}
 function scoreBarColor(a) {{
   if (a == null) return '#2d3340';
-  if (a>=3.3) return '#22c55e';
-  if (a>=2.6) return '#84cc16';
-  if (a>=1.9) return '#f59e0b';
-  if (a>=1.2) return '#f97316';
+  if (a>=90) return '#22c55e';
+  if (a>=80) return '#84cc16';
+  if (a>=70) return '#f59e0b';
+  if (a>=60) return '#f97316';
   return '#ef4444';
 }}
 function scoreBar(avg) {{
   if (avg == null) return `<td class="neutral">—</td>`;
-  const pct = Math.round((avg/4)*100);
+  const pct = Math.round(avg);   // already 0-100
   const col = scoreBarColor(avg);
   return `<td><div class="scbar"><span style="color:${{col}};font-size:11px">${{avg.toFixed(1)}}</span><div class="scbar-wrap"><div class="scbar-fill" style="width:${{pct}}%;background:${{col}}"></div></div></div></td>`;
 }}
@@ -438,7 +439,7 @@ function applyFilters() {{
 function renderStockTable(data) {{
   const tbody = document.getElementById('tbl-body');
   if (!data.length) {{
-    tbody.innerHTML=`<tr><td colspan="25" class="empty"><span>∅</span>No results.</td></tr>`;
+    tbody.innerHTML=`<tr><td colspan="26" class="empty"><span>∅</span>No results.</td></tr>`;
     return;
   }}
   tbody.innerHTML = data.map(s => `<tr>
@@ -465,6 +466,7 @@ function renderStockTable(data) {{
     ${{cell(s.roa,true)}}
     ${{cell(s.debt_equity)}}
     ${{cell(s.analyst_upside,true,true)}}
+    ${{cell(s.analyst_rec_label)}}
     ${{cell(s.target_price)}}
     ${{cell(s.next_earnings)}}
   </tr>`).join('');
