@@ -2,9 +2,8 @@ name: Update Stock Data
 
 on:
   schedule:
-    # 8 PM ET Sunday = Monday 00:00 UTC  (adjust as needed)
-    - cron: '0 0 * * 1'
-  workflow_dispatch:   # allow manual trigger from GitHub UI
+    - cron: '0 0 * * 1'   # Monday midnight UTC (8 PM ET Sunday)
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,7 +11,7 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 120    # scraping ~900 tickers takes ~30–45 min
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repo
@@ -38,6 +37,6 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.json index.html
+          git add data.json portfolio.json index.html
           git diff --cached --quiet || git commit -m "chore: update stock data $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
