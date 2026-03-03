@@ -185,130 +185,168 @@ def fetch_ticker_data(symbol):
                 debt_equity = round(debt_equity / 100, 3)
 
             # ── Growth fallbacks from info ─────────────────────────────────
-            rev_growth_info = safe_pct(info.get("revenueGrowth"))
-            eps_growth_info = safe_pct(info.get("earningsGrowth"))
+            # Treat 0.0 as None — yfinance returns 0.0 (not None) for many
+            # tickers where the field is actually unavailable (e.g. NVDA).
+            _rg = info.get("revenueGrowth")
+            _eg = info.get("earningsGrowth")
+            rev_growth_info = safe_pct(_rg) if (_rg is not None and _rg != 0.0) else None
+            eps_growth_info = safe_pct(_eg) if (_eg is not None and _eg != 0.0) else None
 
             # ── Quarterly financials ───────────────────────────────────────
-            rev_growth_ttm       = None
-            eps_growth_ttm       = None
-            rev_accel            = None
-            eps_accel            = None
+            rev_growth_ttm = None
+            eps_growth_ttm = None
+            rev_accel      = None
+            eps_accel      = None
 
             try:
-                # yfinance returns quarterly_income_stmt with rows as metrics,
-                # columns as quarter-end dates (newest first after sort).
                 q_inc = tk.quarterly_income_stmt
-                a_inc = tk.income_stmt   # annual, newest first
+                a_inc = tk.income_stmt
 
                 if q_inc is not None and not q_inc.empty:
-                    # Ensure newest-first column order
                     q_inc = q_inc.sort_index(axis=1, ascending=False)
                     nq    = q_inc.shape[1]
 
                     def get_row(df, *names):
+                        """Find a row by name; fall back to any row containing 'revenue'."""
                         for n in names:
                             if n in df.index:
-                                return df.loc[n].astype(float)
+                                try:
+                                    return df.loc[n].astype(float)
+                                except Exception:
+                                    pass
+                        for idx in df.index:
+                            if "revenue" in str(idx).lower():
+                                try:
+                                    return df.loc[idx].astype(float)
+                                except Exception:
+                                    pass
                         return None
 
-                    rev_q = get_row(q_inc, "Total Revenue", "Revenue", "Net Revenue")
-                    eps_q = get_row(q_inc, "Diluted EPS", "Basic EPS",
-                                    "Basic And Diluted EPS")
+                    def get_eps_row(df):
+                        for n in ["Diluted EPS", "Basic EPS",
+                                  "Basic And Diluted EPS", "EPS"]:
+                            if n in df.index:
+                                try:
+                                    return df.loc[n].astype(float)
+                                except Exception:
+                                    pass
+                        return None
+
+                    def sv(series, i):
+                        """Safe scalar: return float or None (handles NaN)."""
+                        if i >= len(series):
+                            return None
+                        try:
+                            f = float(series.iloc[i])
+                            return None if (f != f) else f   # NaN → None
+                        except Exception:
+                            return None
+
+                    def safe_sum(series, start, end):
+                        """Sum a slice; return None if too many NaNs."""
+                        sl = series.iloc[start:end].dropna()
+                        needed = end - start
+                        if len(sl) < needed - 1:   # allow at most 1 missing
+                            return None
+                        return float(sl.sum())
+
+                    rev_q = get_row(q_inc, "Total Revenue", "Revenue",
+                                    "Net Revenue", "Operating Revenue",
+                                    "Total Net Revenue")
+                    eps_q = get_eps_row(q_inc)
 
                     # ── TTM revenue growth ─────────────────────────────────
-                    # Method 1: 8 quarters available — compare TTM to prior TTM
-                    if rev_q is not None and nq >= 8:
-                        ttm  = rev_q.iloc[:4].sum()
-                        prev = rev_q.iloc[4:8].sum()
-                        if ttm and prev and prev != 0:
-                            rev_growth_ttm = round((ttm - prev) / abs(prev) * 100, 2)
-
-                    # Method 2: compare TTM to most recent full fiscal year
-                    if rev_growth_ttm is None and rev_q is not None and nq >= 4 \
-                            and a_inc is not None and not a_inc.empty:
-                        a_inc_s = a_inc.sort_index(axis=1, ascending=False)
-                        rev_a   = get_row(a_inc_s, "Total Revenue", "Revenue", "Net Revenue")
-                        if rev_a is not None and len(rev_a) >= 1:
-                            ttm      = rev_q.iloc[:4].sum()
-                            prior_yr = safe(rev_a.iloc[0])
-                            if ttm and prior_yr:
-                                rev_growth_ttm = round((ttm - prior_yr) / abs(prior_yr) * 100, 2)
+                    if rev_q is not None:
+                        ttm = safe_sum(rev_q, 0, 4)
+                        if ttm is not None:
+                            if nq >= 8:
+                                prev = safe_sum(rev_q, 4, 8)
+                                if prev and prev != 0:
+                                    rev_growth_ttm = round(
+                                        (ttm - prev) / abs(prev) * 100, 2)
+                            if rev_growth_ttm is None and a_inc is not None \
+                                    and not a_inc.empty:
+                                a_s   = a_inc.sort_index(axis=1, ascending=False)
+                                rev_a = get_row(a_s, "Total Revenue", "Revenue",
+                                                "Net Revenue", "Operating Revenue")
+                                if rev_a is not None and len(rev_a) >= 1:
+                                    prior = sv(rev_a, 0)
+                                    if prior and prior != 0:
+                                        rev_growth_ttm = round(
+                                            (ttm - prior) / abs(prior) * 100, 2)
 
                     # ── Revenue acceleration ───────────────────────────────
-                    # Q0 YoY vs Q1 YoY  (need year-ago quarters)
-                    # Prefer exact year-ago from 8-qtr data; fallback to annual/4
                     if rev_q is not None and nq >= 2:
-                        q0 = safe(rev_q.iloc[0])
-                        q1 = safe(rev_q.iloc[1])
+                        q0    = sv(rev_q, 0)
+                        q1    = sv(rev_q, 1)
+                        q0_ya = sv(rev_q, 4) if nq >= 5 else None
+                        q1_ya = sv(rev_q, 5) if nq >= 6 else None
 
-                        # Exact year-ago quarters
-                        q0_ya = safe(rev_q.iloc[4]) if nq >= 5 else None
-                        q1_ya = safe(rev_q.iloc[5]) if nq >= 6 else None
-
-                        # Annual/4 fallback
                         if (q0_ya is None or q1_ya is None) \
                                 and a_inc is not None and not a_inc.empty:
-                            a_inc_s = a_inc.sort_index(axis=1, ascending=False)
-                            rev_a   = get_row(a_inc_s, "Total Revenue", "Revenue", "Net Revenue")
+                            a_s   = a_inc.sort_index(axis=1, ascending=False)
+                            rev_a = get_row(a_s, "Total Revenue", "Revenue",
+                                            "Net Revenue", "Operating Revenue")
                             if rev_a is not None and len(rev_a) >= 2:
-                                # Use most recent and prior fiscal year /4
-                                yr0 = safe(rev_a.iloc[0])
-                                yr1 = safe(rev_a.iloc[1])
+                                yr0 = sv(rev_a, 0)
+                                yr1 = sv(rev_a, 1)
                                 if q0_ya is None and yr0:
                                     q0_ya = yr0 / 4
                                 if q1_ya is None and yr1:
                                     q1_ya = yr1 / 4
 
-                        if q0 and q0_ya and q1 and q1_ya and q0_ya != 0 and q1_ya != 0:
+                        if q0 and q1 and q0_ya and q1_ya \
+                                and q0_ya != 0 and q1_ya != 0:
                             yoy0 = (q0 - q0_ya) / abs(q0_ya) * 100
                             yoy1 = (q1 - q1_ya) / abs(q1_ya) * 100
                             rev_accel = round(yoy0 - yoy1, 2)
 
                     # ── EPS TTM growth ─────────────────────────────────────
-                    if eps_q is not None and nq >= 8:
-                        ttm  = eps_q.iloc[:4].sum()
-                        prev = eps_q.iloc[4:8].sum()
-                        if ttm and prev and prev != 0:
-                            eps_growth_ttm = round((ttm - prev) / abs(prev) * 100, 2)
-
-                    if eps_growth_ttm is None and eps_q is not None and nq >= 4 \
-                            and a_inc is not None and not a_inc.empty:
-                        a_inc_s = a_inc.sort_index(axis=1, ascending=False)
-                        eps_a   = get_row(a_inc_s, "Diluted EPS", "Basic EPS",
-                                          "Basic And Diluted EPS")
-                        if eps_a is not None and len(eps_a) >= 1:
-                            ttm      = eps_q.iloc[:4].sum()
-                            prior_yr = safe(eps_a.iloc[0])
-                            if ttm and prior_yr:
-                                eps_growth_ttm = round((ttm - prior_yr) / abs(prior_yr) * 100, 2)
+                    if eps_q is not None:
+                        ttm_e = safe_sum(eps_q, 0, 4)
+                        if ttm_e is not None:
+                            if nq >= 8:
+                                prev_e = safe_sum(eps_q, 4, 8)
+                                if prev_e and prev_e != 0:
+                                    eps_growth_ttm = round(
+                                        (ttm_e - prev_e) / abs(prev_e) * 100, 2)
+                            if eps_growth_ttm is None and a_inc is not None \
+                                    and not a_inc.empty:
+                                a_s   = a_inc.sort_index(axis=1, ascending=False)
+                                eps_a = get_eps_row(a_s)
+                                if eps_a is not None and len(eps_a) >= 1:
+                                    prior_e = sv(eps_a, 0)
+                                    if prior_e and prior_e != 0:
+                                        eps_growth_ttm = round(
+                                            (ttm_e - prior_e) / abs(prior_e) * 100, 2)
 
                     # ── EPS acceleration ───────────────────────────────────
                     if eps_q is not None and nq >= 2:
-                        e0 = safe(eps_q.iloc[0])
-                        e1 = safe(eps_q.iloc[1])
-                        e0_ya = safe(eps_q.iloc[4]) if nq >= 5 else None
-                        e1_ya = safe(eps_q.iloc[5]) if nq >= 6 else None
+                        e0    = sv(eps_q, 0)
+                        e1    = sv(eps_q, 1)
+                        e0_ya = sv(eps_q, 4) if nq >= 5 else None
+                        e1_ya = sv(eps_q, 5) if nq >= 6 else None
 
                         if (e0_ya is None or e1_ya is None) \
                                 and a_inc is not None and not a_inc.empty:
-                            a_inc_s = a_inc.sort_index(axis=1, ascending=False)
-                            eps_a   = get_row(a_inc_s, "Diluted EPS", "Basic EPS",
-                                              "Basic And Diluted EPS")
+                            a_s   = a_inc.sort_index(axis=1, ascending=False)
+                            eps_a = get_eps_row(a_s)
                             if eps_a is not None and len(eps_a) >= 2:
-                                yr0 = safe(eps_a.iloc[0])
-                                yr1 = safe(eps_a.iloc[1])
+                                yr0 = sv(eps_a, 0)
+                                yr1 = sv(eps_a, 1)
                                 if e0_ya is None and yr0:
                                     e0_ya = yr0 / 4
                                 if e1_ya is None and yr1:
                                     e1_ya = yr1 / 4
 
-                        if e0 and e0_ya and e1 and e1_ya and e0_ya != 0 and e1_ya != 0:
+                        if e0 and e1 and e0_ya and e1_ya \
+                                and e0_ya != 0 and e1_ya != 0:
                             yoy0 = (e0 - e0_ya) / abs(e0_ya) * 100
                             yoy1 = (e1 - e1_ya) / abs(e1_ya) * 100
                             eps_accel = round(yoy0 - yoy1, 2)
 
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"    [growth calc error {symbol}]: {e}")
 
             # Apply info-level fallbacks
             if rev_growth_ttm is None:
