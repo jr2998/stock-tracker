@@ -23,9 +23,7 @@ OUTPUT_FILE     = "raw_data.json"
 PORTFOLIO_FILE  = "portfolio.json"
 DELAY_BETWEEN   = 0.8   # seconds between tickers
 MAX_RETRIES     = 3
-PORTFOLIO_START = 1_000_000.0   # starting cash
-BUY_THRESHOLD   = 65.0          # buy A and B rated stocks (score >= 65)
-SELL_THRESHOLD  = 52.0          # sell when grade drops to C (score < 52)
+PORTFOLIO_START = 1_000_000.0   # starting cash (used for SPY benchmark scaling)
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
 
@@ -453,8 +451,6 @@ def load_portfolio():
         return json.loads(p.read_text())
     return None
 
-RESET_PORTFOLIO = True   # ← set to False after first run to preserve history
-
 def save_portfolio(portfolio):
     Path(PORTFOLIO_FILE).write_text(json.dumps(portfolio, indent=2, default=str))
 
@@ -476,169 +472,6 @@ def get_sp500_history(start_date):
     except Exception as e:
         print(f"  WARNING: Could not fetch SPY history: {e}")
         return []
-
-def update_portfolio(records, portfolio):
-    """
-    Given current stock records and existing portfolio state,
-    buy/sell based on grade thresholds and update holdings.
-    Returns updated portfolio dict.
-    """
-    today_str = date.today().isoformat()
-
-    # Build lookup by ticker
-    stock_map = {r["ticker"]: r for r in records}
-
-    holdings  = portfolio.get("holdings", {})
-    cash      = portfolio.get("cash", PORTFOLIO_START)
-    history   = portfolio.get("history", [])
-    trades    = portfolio.get("trades", [])
-
-    # ── Step 1: Sell anything that fell below threshold ────────────────────
-    to_sell = []
-    for ticker, pos in holdings.items():
-        stock = stock_map.get(ticker)
-        if stock is None:
-            to_sell.append(ticker)   # no longer in universe
-            continue
-        overall = stock.get("overall")
-        if overall is None or overall < SELL_THRESHOLD:
-            to_sell.append(ticker)
-
-    for ticker in to_sell:
-        pos   = holdings[ticker]
-        stock = stock_map.get(ticker)
-        price = stock["price_raw"] if stock else pos.get("last_price", pos["cost_basis"])
-        if price is None:
-            price = pos.get("last_price", pos["cost_basis"])
-        proceeds = pos["shares"] * price
-        cash += proceeds
-        gain_pct = round((price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2) \
-                   if pos["cost_basis"] else 0
-        trades.append({
-            "date":      today_str,
-            "action":    "SELL",
-            "ticker":    ticker,
-            "shares":    pos["shares"],
-            "price":     round(price, 2),
-            "proceeds":  round(proceeds, 2),
-            "gain_pct":  gain_pct,
-        })
-        print(f"    SELL {ticker}: {pos['shares']:.4f} sh @ ${price:.2f}  gain={gain_pct:+.1f}%")
-        del holdings[ticker]
-
-    # ── Step 2: Determine buy candidates ──────────────────────────────────
-    buy_candidates = [
-        r for r in records
-        if r.get("overall") is not None
-        and r["overall"] >= BUY_THRESHOLD
-        and r["ticker"] not in holdings
-        and r.get("price_raw") is not None
-        and r["price_raw"] > 0
-    ]
-
-    # Weight by overall score (proportional)
-    if buy_candidates:
-        total_score = sum(r["overall"] for r in buy_candidates)
-        # Also include existing holdings in the allocation pool
-        existing_tickers = list(holdings.keys())
-        existing_scores  = [
-            stock_map[t]["overall"]
-            for t in existing_tickers
-            if stock_map.get(t) and stock_map[t].get("overall") is not None
-        ]
-        all_scores = [r["overall"] for r in buy_candidates] + existing_scores
-        total_score_all = sum(all_scores)
-
-        # Target portfolio value (current holdings MV + cash)
-        holdings_mv = sum(
-            h["shares"] * (stock_map[t]["price_raw"] if stock_map.get(t) and
-                           stock_map[t].get("price_raw") else h["last_price"])
-            for t, h in holdings.items()
-        )
-        total_portfolio = holdings_mv + cash
-
-        # Buy each new candidate up to its target weight
-        for r in buy_candidates:
-            weight       = r["overall"] / total_score_all
-            target_value = total_portfolio * weight
-            price        = r["price_raw"]
-            if price is None or price <= 0:
-                continue
-            affordable = min(target_value, cash * 0.98)   # leave 2% buffer
-            if affordable < price:
-                continue   # can't afford even 1 share
-            shares = affordable / price
-            cost   = shares * price
-            cash  -= cost
-            holdings[r["ticker"]] = {
-                "shares":      round(shares, 6),
-                "cost_basis":  round(price, 4),
-                "last_price":  round(price, 4),
-                "bought_date": today_str,
-            }
-            trades.append({
-                "date":    today_str,
-                "action":  "BUY",
-                "ticker":  r["ticker"],
-                "shares":  round(shares, 6),
-                "price":   round(price, 2),
-                "cost":    round(cost, 2),
-            })
-            print(f"    BUY  {r['ticker']}: {shares:.4f} sh @ ${price:.2f}")
-
-    # ── Step 3: Update last prices for all holdings ────────────────────────
-    holdings_mv = 0
-    for ticker, pos in holdings.items():
-        stock = stock_map.get(ticker)
-        if stock and stock.get("price_raw"):
-            pos["last_price"] = round(stock["price_raw"], 4)
-        holdings_mv += pos["shares"] * pos["last_price"]
-
-    total_value = holdings_mv + cash
-
-    # ── Step 4: Append today's portfolio value to history ─────────────────
-    # Avoid duplicate date entries
-    if not history or history[-1]["date"] != today_str:
-        history.append({
-            "date":  today_str,
-            "value": round(total_value, 2),
-            "cash":  round(cash, 2),
-        })
-
-    portfolio.update({
-        "holdings":    holdings,
-        "cash":        round(cash, 2),
-        "total_value": round(total_value, 2),
-        "history":     history,
-        "trades":      trades,
-        "updated_at":  today_str,
-    })
-
-    return portfolio
-
-def init_portfolio(records):
-    """Create a fresh portfolio from current records."""
-    today_str    = date.today().isoformat()
-    print(f"  Initialising new portfolio on {today_str} with ${PORTFOLIO_START:,.0f}")
-
-    # Fetch SPY history from today (will just be 1 point at start)
-    spy_history = get_sp500_history(today_str)
-
-    portfolio = {
-        "start_date":   today_str,
-        "start_value":  PORTFOLIO_START,
-        "cash":         PORTFOLIO_START,
-        "holdings":     {},
-        "history":      [],
-        "spy_history":  spy_history,
-        "trades":       [],
-        "updated_at":   today_str,
-    }
-    portfolio = update_portfolio(records, portfolio)
-
-    # Extend spy history to cover full period on future runs
-    # (history starts today so spy_history also starts today)
-    return portfolio
 
 def refresh_spy_history(portfolio):
     """Extend SPY benchmark history to today."""
@@ -670,8 +503,9 @@ def main():
                 skipped += 1
             else:
                 records.append(raw)
-                cap_str = fmt_cap(raw.get("market_cap_b"))
-                print(f"✓ {raw['name'][:32]:<32} {cap_str or '':>8}")
+                b = raw.get("market_cap_b")
+                cap_str = (f"${b/1000:.2f}T" if b and b >= 1000 else f"${b:.1f}B") if b else ""
+                print(f"✓ {raw['name'][:32]:<32} {cap_str:>8}")
         except Exception as e:
             print(f"ERROR: {e}")
             errors += 1
