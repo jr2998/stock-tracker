@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock Grader — Large Cap Universe</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    /* ── Reset & Base ───────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:          #0a0c10;
+      --surface:     #111318;
+      --surface2:    #181c24;
+      --border:      #222730;
+      --border2:     #2d3340;
+      --text:        #dde3ee;
+      --text-muted:  #5a6478;
+      --text-dim:    #8a93a8;
+      --accent:      #4fc3f7;
+      --accent-dim:  #1a3a4a;
+
+      --grade-a:     #22c55e;
+      --grade-b:     #84cc16;
+      --grade-c:     #f59e0b;
+      --grade-d:     #f97316;
+      --grade-f:     #ef4444;
+
+      --pos:         #22c55e;
+      --neg:         #ef4444;
+      --neutral:     #5a6478;
+
+      --mono:        'Space Mono', monospace;
+      --sans:        'DM Sans', sans-serif;
+
+      --radius:      6px;
+      --radius-lg:   12px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ── Scanline texture overlay ───────────────────────────────────────── */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0,0,0,0.04) 2px,
+        rgba(0,0,0,0.04) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────────────── */
+    .page {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 32px 24px 80px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .header-left h1 {
+      font-family: var(--mono);
+      font-size: clamp(22px, 3vw, 32px);
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+      line-height: 1.1;
+    }
+
+    .header-left h1 span {
+      color: var(--accent);
+    }
+
+    .header-left .subtitle {
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+
+    .header-right {
+      text-align: right;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.8;
+    }
+
+    .header-right .count {
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      display: block;
+    }
+
+    /* ── Grade legend ───────────────────────────────────────────────────── */
+    .legend {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .legend-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-right: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    .legend-badge {
+      width: 24px;
+      height: 24px;
+      border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    /* ── Controls ───────────────────────────────────────────────────────── */
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .control-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    input[type="text"],
+    select {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      padding: 7px 12px;
+      border-radius: var(--radius);
+      outline: none;
+      transition: border-color 0.15s;
+      height: 36px;
+    }
+
+    input[type="text"] {
+      width: 220px;
+    }
+
+    input[type="text"]:focus,
+    select:focus {
+      border-color: var(--accent);
+    }
+
+    select option {
+      background: var(--surface2);
+    }
+
+    .btn-group {
+      display: flex;
+      gap: 4px;
+    }
+
+    .btn {
+      height: 36px;
+      padding: 0 14px;
+      border: 1px solid var(--border2);
+      background: var(--surface2);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 12px;
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ── Table wrapper ──────────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      background: var(--surface);
+    }
+
+    /* ── Table ──────────────────────────────────────────────────────────── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    /* Sticky first two columns */
+    th:nth-child(1), td:nth-child(1) {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: var(--surface);
+    }
+    th:nth-child(2), td:nth-child(2) {
+      position: sticky;
+      left: 60px;
+      z-index: 2;
+      background: var(--surface);
+    }
+    thead th:nth-child(1), thead th:nth-child(2) {
+      z-index: 3;
+      background: var(--surface2);
+    }
+
+    thead tr {
+      background: var(--surface2);
+    }
+
+    th {
+      padding: 10px 14px;
+      text-align: left;
+      font-family: var(--mono);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s;
+    }
+
+    th:hover {
+      color: var(--accent);
+    }
+
+    th.sorted-asc::after  { content: ' ↑'; color: var(--accent); }
+    th.sorted-desc::after { content: ' ↓'; color: var(--accent); }
+
+    /* Section divider headers */
+    th.section-start {
+      border-left: 2px solid var(--border2);
+    }
+    td.section-start {
+      border-left: 2px solid var(--border);
+    }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+    }
+
+    tbody tr:last-child {
+      border-bottom: none;
+    }
+
+    tbody tr:hover {
+      background: var(--surface2) !important;
+    }
+
+    tbody tr:hover td:nth-child(1),
+    tbody tr:hover td:nth-child(2) {
+      background: var(--surface2) !important;
+    }
+
+    td {
+      padding: 9px 14px;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-dim);
+    }
+
+    /* Ticker cell */
+    .cell-ticker {
+      font-weight: 700;
+      color: var(--text);
+      font-size: 13px;
+      min-width: 60px;
+    }
+
+    /* Name cell */
+    .cell-name {
+      font-family: var(--sans);
+      font-size: 12px;
+      color: var(--text-dim);
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    /* Grade badge */
+    .grade-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      border-radius: 6px;
+      font-family: var(--mono);
+      font-weight: 700;
+      font-size: 15px;
+    }
+
+    .grade-a { background: rgba(34,197,94,0.15);  color: var(--grade-a); border: 1px solid rgba(34,197,94,0.3);  }
+    .grade-b { background: rgba(132,204,22,0.15); color: var(--grade-b); border: 1px solid rgba(132,204,22,0.3); }
+    .grade-c { background: rgba(245,158,11,0.15); color: var(--grade-c); border: 1px solid rgba(245,158,11,0.3); }
+    .grade-d { background: rgba(249,115,22,0.15); color: var(--grade-d); border: 1px solid rgba(249,115,22,0.3); }
+    .grade-f { background: rgba(239,68,68,0.15);  color: var(--grade-f); border: 1px solid rgba(239,68,68,0.3);  }
+
+    /* Numeric coloring */
+    .pos     { color: var(--pos); }
+    .neg     { color: var(--neg); }
+    .neutral { color: var(--text-muted); }
+
+    /* Score bars in sub-grade cells */
+    .score-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .score-bar-wrap {
+      width: 36px;
+      height: 4px;
+      background: var(--border2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .score-bar {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.3s;
+    }
+
+    /* Sector pill */
+    .sector-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--sans);
+      white-space: nowrap;
+    }
+
+    /* ── Empty state ────────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+
+    .empty-state span {
+      font-size: 32px;
+      display: block;
+      margin-bottom: 12px;
+    }
+
+    /* ── Footer ─────────────────────────────────────────────────────────── */
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border);
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      display: flex;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    /* ── Tooltip ────────────────────────────────────────────────────────── */
+    [data-tip] {
+      position: relative;
+      cursor: help;
+    }
+    [data-tip]::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 11px;
+      white-space: nowrap;
+      padding: 5px 10px;
+      border-radius: 4px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 100;
+    }
+    [data-tip]:hover::after { opacity: 1; }
+
+    /* ── Animations ─────────────────────────────────────────────────────── */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .table-wrap { animation: fadeIn 0.4s ease both; }
+
+    /* ── Scrollbar ──────────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-left">
+      <h1>Stock<span>Grader</span></h1>
+      <div class="subtitle">// Large Cap Universe &gt;$20B · Data via Yahoo Finance</div>
+    </div>
+    <div class="header-right">
+      <span class="count" id="visible-count">0</span>
+      companies · Updated 2026-03-03 01:37 UTC
+    </div>
+  </div>
+
+  <!-- Grade Legend -->
+  <div class="legend">
+    <span class="legend-label">Grade:</span>
+    <div class="legend-item">
+      <span class="grade-badge grade-a">A</span>
+      <span>3.3–4.0 · Exceptional</span>
+    </div>
+    <div class="legend-item">
+      <span class="grade-badge grade-b">B</span>
+      <span>2.6–3.2 · Good</span>
+    </div>
+    <div class="legend-item">
+      <span class="grade-badge grade-c">C</span>
+      <span>1.9–2.5 · Average</span>
+    </div>
+    <div class="legend-item">
+      <span class="grade-badge grade-d">D</span>
+      <span>1.2–1.8 · Weak</span>
+    </div>
+    <div class="legend-item">
+      <span class="grade-badge grade-f">F</span>
+      <span>&lt;1.2 · Poor</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <div class="control-group">
+      <span class="control-label">Search</span>
+      <input type="text" id="search" placeholder="Ticker or name...">
+    </div>
+
+    <div class="control-group">
+      <span class="control-label">Sector</span>
+      <select id="sector-filter">
+        <option value="">All Sectors</option>
+        
+      </select>
+    </div>
+
+    <div class="control-group">
+      <span class="control-label">Grade</span>
+      <div class="btn-group" id="grade-filter">
+        <button class="btn active" data-grade="">All</button>
+        <button class="btn" data-grade="A">A</button>
+        <button class="btn" data-grade="B">B</button>
+        <button class="btn" data-grade="C">C</button>
+        <button class="btn" data-grade="D">D</button>
+        <button class="btn" data-grade="F">F</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table id="stock-table">
+      <thead>
+        <tr>
+          <th data-col="ticker">Ticker</th>
+          <th data-col="name">Name</th>
+          <th data-col="grade" class="section-start" data-tip="Weighted composite score A–F">Grade</th>
+          <th data-col="overall" data-tip="Overall score 0–4">Score</th>
+          <th data-col="sector" class="section-start">Sector</th>
+          <th data-col="market_cap">Mkt Cap</th>
+          <th data-col="price">Price</th>
+          <th data-col="perf_52w" data-tip="52-week price return">52W Perf</th>
+          <!-- Growth -->
+          <th data-col="rev_growth_ttm" class="section-start" data-tip="Revenue growth YoY (TTM)">Rev Growth</th>
+          <th data-col="eps_growth_ttm" data-tip="EPS growth YoY (TTM)">EPS Growth</th>
+          <th data-col="rev_accel" data-tip="Revenue acceleration: current quarter YoY minus prior quarter YoY">Rev Accel</th>
+          <th data-col="eps_accel" data-tip="EPS acceleration: current quarter YoY minus prior quarter YoY">EPS Accel</th>
+          <th data-col="earnings_surprise" data-tip="Most recent quarter EPS vs estimate">EPS Surprise</th>
+          <!-- Valuation -->
+          <th data-col="forward_pe" class="section-start" data-tip="Forward Price / Earnings">Fwd P/E</th>
+          <th data-col="peg_ratio" data-tip="Price/Earnings to Growth">PEG</th>
+          <th data-col="ev_ebitda" data-tip="Enterprise Value / EBITDA">EV/EBITDA</th>
+          <th data-col="price_sales" data-tip="Price / Sales (TTM)">P/S</th>
+          <!-- Profitability -->
+          <th data-col="gross_margin" class="section-start" data-tip="Gross profit margin">Gross Mgn</th>
+          <th data-col="operating_margin" data-tip="Operating profit margin">Op Mgn</th>
+          <th data-col="roe" data-tip="Return on Equity">ROE</th>
+          <th data-col="roa" data-tip="Return on Assets">ROA</th>
+          <th data-col="debt_equity" data-tip="Total Debt / Equity">D/E</th>
+          <!-- Sentiment -->
+          <th data-col="analyst_upside" class="section-start" data-tip="Upside to consensus analyst price target">Analyst ↑</th>
+          <th data-col="target_price" data-tip="Consensus analyst price target">Target</th>
+          <th data-col="next_earnings" data-tip="Next earnings report date">Earnings</th>
+        </tr>
+      </thead>
+      <tbody id="table-body">
+        <tr><td colspan="26" class="empty-state"><span>⟳</span>Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <span>Data sourced from Yahoo Finance via yfinance · For informational purposes only · Not financial advice</span>
+    <span id="footer-count"></span>
+  </div>
+
+</div>
+
+<script>
+// ── Data ─────────────────────────────────────────────────────────────────────
+const STOCKS = [];
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+function parseNum(v) {
+  if (v == null || v === '-' || v === '') return null;
+  const n = parseFloat(String(v).replace(/[^0-9.+-]/g, ''));
+  return isNaN(n) ? null : n;
+}
+
+function colorClass(v) {
+  if (v == null || v === '' || v === '-') return 'neutral';
+  const s = String(v).trim();
+  const n = parseNum(v);
+  if (n === null) return 'neutral';
+  if (n > 0) return 'pos';
+  if (n < 0) return 'neg';
+  return 'neutral';
+}
+
+function cell(v, opts={}) {
+  const {color=false, neutral=false, sectionStart=false} = opts;
+  const val   = (v != null && v !== '') ? v : '—';
+  const cls   = (!neutral && color !== false) ? colorClass(v) : '';
+  const sc    = sectionStart ? ' section-start' : '';
+  return `<td class="${cls}${sc}">${val}</td>`;
+}
+
+function scoreBarColor(avg) {
+  if (avg == null) return '#2d3340';
+  if (avg >= 3.3) return '#22c55e';
+  if (avg >= 2.6) return '#84cc16';
+  if (avg >= 1.9) return '#f59e0b';
+  if (avg >= 1.2) return '#f97316';
+  return '#ef4444';
+}
+
+function scoreBar(avg, label) {
+  if (avg == null) return `<td class="neutral">—</td>`;
+  const pct   = Math.round((avg / 4) * 100);
+  const color = scoreBarColor(avg);
+  return `<td>
+    <div class="score-cell">
+      <span style="color:${color};font-size:11px;">${avg.toFixed(1)}</span>
+      <div class="score-bar-wrap">
+        <div class="score-bar" style="width:${pct}%;background:${color};"></div>
+      </div>
+    </div>
+  </td>`;
+}
+
+// ── Render ────────────────────────────────────────────────────────────────────
+function renderTable(data) {
+  const tbody = document.getElementById('table-body');
+  if (!data.length) {
+    tbody.innerHTML = `<tr><td colspan="26" class="empty-state"><span>∅</span>No results match your filters.</td></tr>`;
+    return;
+  }
+
+  const rows = data.map(s => {
+    const gc = s.grade_color || 'neutral';
+    return `<tr>
+      <td class="cell-ticker">${s.ticker}</td>
+      <td class="cell-name" title="${s.name || ''}">${s.name || '—'}</td>
+      <td class="section-start"><span class="grade-badge ${gc}">${s.grade || '—'}</span></td>
+      ${scoreBar(s.overall, 'Overall')}
+      <td class="section-start"><span class="sector-pill">${s.sector || '—'}</span></td>
+      ${cell(s.market_cap)}
+      ${cell(s.price)}
+      ${cell(s.perf_52w, {color:true})}
+      ${cell(s.rev_growth_ttm,    {color:true, sectionStart:true})}
+      ${cell(s.eps_growth_ttm,    {color:true})}
+      ${cell(s.rev_accel,         {color:true})}
+      ${cell(s.eps_accel,         {color:true})}
+      ${cell(s.earnings_surprise, {color:true})}
+      ${cell(s.forward_pe,   {sectionStart:true})}
+      ${cell(s.peg_ratio)}
+      ${cell(s.ev_ebitda)}
+      ${cell(s.price_sales)}
+      ${cell(s.gross_margin,     {color:true, sectionStart:true})}
+      ${cell(s.operating_margin, {color:true})}
+      ${cell(s.roe,              {color:true})}
+      ${cell(s.roa,              {color:true})}
+      ${cell(s.debt_equity,      {color:false})}
+      ${cell(s.analyst_upside,   {color:true, sectionStart:true})}
+      ${cell(s.target_price)}
+      ${cell(s.next_earnings,    {neutral:true})}
+    </tr>`;
+  });
+
+  tbody.innerHTML = rows.join('');
+  document.getElementById('visible-count').textContent = data.length.toLocaleString();
+  document.getElementById('footer-count').textContent  =
+    `Showing ${data.length.toLocaleString()} of ${STOCKS.length.toLocaleString()} companies`;
+}
+
+// ── Filter & Search ───────────────────────────────────────────────────────────
+let activeGrade  = '';
+let activeSector = '';
+let searchQuery  = '';
+
+function applyFilters() {
+  let result = STOCKS;
+
+  if (searchQuery) {
+    const q = searchQuery.toLowerCase();
+    result = result.filter(s =>
+      (s.ticker || '').toLowerCase().includes(q) ||
+      (s.name   || '').toLowerCase().includes(q)
+    );
+  }
+
+  if (activeSector) {
+    result = result.filter(s => s.sector === activeSector);
+  }
+
+  if (activeGrade) {
+    result = result.filter(s => s.grade === activeGrade);
+  }
+
+  renderTable(applySortToData(result));
+}
+
+// ── Sort ──────────────────────────────────────────────────────────────────────
+let sortCol = 'overall';
+let sortDir = 'desc';
+
+const SORT_NUMERIC_COLS = new Set([
+  'overall','growth_avg','val_avg','prof_avg','mom_avg',
+  'market_cap','price','perf_52w',
+  'rev_growth_ttm','eps_growth_ttm','rev_accel','eps_accel','earnings_surprise',
+  'forward_pe','peg_ratio','ev_ebitda','price_sales',
+  'gross_margin','operating_margin','roe','roa','debt_equity',
+  'analyst_upside','target_price'
+]);
+
+function extractSortVal(s, col) {
+  const raw = s[col];
+  if (SORT_NUMERIC_COLS.has(col)) {
+    const n = parseNum(raw);
+    return n ?? (sortDir === 'asc' ? Infinity : -Infinity);
+  }
+  return String(raw ?? '').toLowerCase();
+}
+
+function applySortToData(data) {
+  return [...data].sort((a, b) => {
+    const av = extractSortVal(a, sortCol);
+    const bv = extractSortVal(b, sortCol);
+    if (av < bv) return sortDir === 'asc' ? -1 : 1;
+    if (av > bv) return sortDir === 'asc' ?  1 : -1;
+    return 0;
+  });
+}
+
+// ── Event wiring ──────────────────────────────────────────────────────────────
+document.querySelectorAll('th[data-col]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.col;
+    if (sortCol === col) {
+      sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortCol = col;
+      sortDir = SORT_NUMERIC_COLS.has(col) ? 'desc' : 'asc';
+    }
+    document.querySelectorAll('th').forEach(t => t.classList.remove('sorted-asc','sorted-desc'));
+    th.classList.add(sortDir === 'asc' ? 'sorted-asc' : 'sorted-desc');
+    applyFilters();
+  });
+});
+
+document.getElementById('search').addEventListener('input', e => {
+  searchQuery = e.target.value.trim();
+  applyFilters();
+});
+
+document.getElementById('sector-filter').addEventListener('change', e => {
+  activeSector = e.target.value;
+  applyFilters();
+});
+
+document.querySelectorAll('#grade-filter .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#grade-filter .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeGrade = btn.dataset.grade;
+    applyFilters();
+  });
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+// Mark initial sort header
+document.querySelector('th[data-col="overall"]')?.classList.add('sorted-desc');
+applyFilters();
+</script>
+</body>
+</html>
