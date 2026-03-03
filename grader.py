@@ -305,7 +305,9 @@ def format_record(rec):
 
 
 
-# ─── Portfolio helpers (duplicated from scraper — keeps grader self-contained) ─
+# ─── Portfolio management (self-contained — no dependency on scraper.py) ─────
+
+PORTFOLIO_START = 1_000_000.0
 
 def load_portfolio():
     p = Path(PORTFOLIO_FILE)
@@ -314,72 +316,111 @@ def load_portfolio():
 def save_portfolio(portfolio):
     Path(PORTFOLIO_FILE).write_text(json.dumps(portfolio, indent=2, default=str))
 
-def _port_update_grades(records, portfolio):
-    """Re-evaluate buy/sell decisions based on updated grades, updating prices."""
-    today     = date.today().isoformat()
+def _get_spy_history(start_date):
+    """Fetch SPY price history normalised to PORTFOLIO_START for benchmark chart."""
+    try:
+        import yfinance as yf
+        spy  = yf.Ticker("SPY")
+        hist = spy.history(start=start_date, auto_adjust=True)
+        if hist.empty:
+            return []
+        start_price = float(hist["Close"].iloc[0])
+        return [
+            {"date": dt.strftime("%Y-%m-%d"),
+             "value": round(PORTFOLIO_START * float(row["Close"]) / start_price, 2)}
+            for dt, row in hist.iterrows()
+        ]
+    except Exception as e:
+        print(f"  WARNING: Could not fetch SPY history: {e}")
+        return []
+
+def _refresh_spy(portfolio):
+    """Extend SPY benchmark history to today."""
+    start = portfolio.get("start_date", date.today().isoformat())
+    spy_h = _get_spy_history(start)
+    if spy_h:
+        portfolio["spy_history"] = spy_h
+    return portfolio
+
+def _update_portfolio(records, portfolio):
+    """
+    Buy/sell based on grade thresholds and update all holdings prices.
+    records must be formatted (scored) records — they must have 'overall' and 'price_raw'.
+    """
+    today_str = date.today().isoformat()
     stock_map = {r["ticker"]: r for r in records}
     holdings  = portfolio.get("holdings", {})
-    cash      = portfolio.get("cash", 0)
+    cash      = portfolio.get("cash", PORTFOLIO_START)
+    history   = portfolio.get("history", [])
     trades    = portfolio.get("trades", [])
 
-    # Sell anything below threshold
+    # ── Sell below threshold or dropped from universe ──────────────────────
     to_sell = [
-        t for t, pos in holdings.items()
-        if (stock_map.get(t, {}).get("overall") or 0) < SELL_THRESHOLD
-        or t not in stock_map
+        ticker for ticker, pos in holdings.items()
+        if ticker not in stock_map
+        or (stock_map[ticker].get("overall") or 0) < SELL_THRESHOLD
     ]
     for ticker in to_sell:
-        pos   = holdings.pop(ticker)
-        stock = stock_map.get(ticker)
-        price = (stock["price_raw"] if stock and stock.get("price_raw")
-                 else pos.get("last_price", pos["cost_basis"]))
+        pos      = holdings.pop(ticker)
+        stock    = stock_map.get(ticker)
+        price    = (stock["price_raw"] if stock and stock.get("price_raw")
+                    else pos.get("last_price", pos["cost_basis"]))
         proceeds = pos["shares"] * price
         cash    += proceeds
-        gain_pct = round((price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2)                    if pos["cost_basis"] else 0
-        trades.append({"date": today, "action": "SELL", "ticker": ticker,
-                        "shares": pos["shares"], "price": round(price, 2),
-                        "proceeds": round(proceeds, 2), "gain_pct": gain_pct})
+        gain_pct = (round((price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2)
+                    if pos["cost_basis"] else 0)
+        trades.append({
+            "date":     today_str, "action":   "SELL", "ticker":   ticker,
+            "shares":   pos["shares"], "price": round(price, 2),
+            "proceeds": round(proceeds, 2), "gain_pct": gain_pct,
+        })
         print(f"    SELL {ticker}: gain={gain_pct:+.1f}%")
 
-    # Buy new candidates
+    # ── Buy new candidates (scored >= BUY_THRESHOLD, not already held) ────
     buy_candidates = [
         r for r in records
-        if r.get("overall", 0) >= BUY_THRESHOLD
+        if (r.get("overall") or 0) >= BUY_THRESHOLD
         and r["ticker"] not in holdings
         and r.get("price_raw") and r["price_raw"] > 0
     ]
     if buy_candidates:
         existing_score_sum = sum(
-            stock_map[t]["overall"] for t in holdings
-            if stock_map.get(t) and stock_map[t].get("overall")
+            stock_map[t].get("overall", 0)
+            for t in holdings if stock_map.get(t)
         )
-        total_score = sum(r["overall"] for r in buy_candidates) + existing_score_sum
-        mv = sum(pos["shares"] * (stock_map[t]["price_raw"] if stock_map.get(t)
-                 and stock_map[t].get("price_raw") else pos["last_price"])
-                 for t, pos in holdings.items())
-        total_portfolio = mv + cash
+        total_score = (sum(r["overall"] for r in buy_candidates)
+                       + existing_score_sum) or 1
+        holdings_mv = sum(
+            pos["shares"] * (stock_map[t]["price_raw"]
+                             if stock_map.get(t) and stock_map[t].get("price_raw")
+                             else pos["last_price"])
+            for t, pos in holdings.items()
+        )
+        total_portfolio = holdings_mv + cash
         for r in buy_candidates:
-            weight   = r["overall"] / total_score
-            target   = total_portfolio * weight
-            price    = r["price_raw"]
-            afford   = min(target, cash * 0.98)
-            if afford < price:
+            weight     = r["overall"] / total_score
+            target_val = total_portfolio * weight
+            price      = r["price_raw"]
+            affordable = min(target_val, cash * 0.98)
+            if affordable < price:
                 continue
-            shares = afford / price
+            shares = affordable / price
             cost   = shares * price
             cash  -= cost
             holdings[r["ticker"]] = {
                 "shares":      round(shares, 6),
                 "cost_basis":  round(price, 4),
                 "last_price":  round(price, 4),
-                "bought_date": today,
+                "bought_date": today_str,
             }
-            trades.append({"date": today, "action": "BUY", "ticker": r["ticker"],
-                            "shares": round(shares, 6), "price": round(price, 2),
-                            "cost": round(cost, 2)})
+            trades.append({
+                "date": today_str, "action": "BUY", "ticker": r["ticker"],
+                "shares": round(shares, 6), "price": round(price, 2),
+                "cost":   round(cost, 2),
+            })
             print(f"    BUY  {r['ticker']}: {shares:.4f} sh @ ${price:.2f}")
 
-    # Update last prices
+    # ── Update last prices for all current holdings ────────────────────────
     holdings_mv = 0
     for ticker, pos in holdings.items():
         stock = stock_map.get(ticker)
@@ -388,20 +429,32 @@ def _port_update_grades(records, portfolio):
         holdings_mv += pos["shares"] * pos["last_price"]
 
     total_value = holdings_mv + cash
-    history     = portfolio.get("history", [])
-    if not history or history[-1]["date"] != today:
-        history.append({"date": today, "value": round(total_value, 2),
-                         "cash": round(cash, 2)})
+    if not history or history[-1]["date"] != today_str:
+        history.append({"date": today_str, "value": round(total_value, 2),
+                        "cash": round(cash, 2)})
 
     portfolio.update({
-        "holdings":    holdings,
-        "cash":        round(cash, 2),
-        "total_value": round(total_value, 2),
-        "history":     history,
-        "trades":      trades,
-        "updated_at":  today,
+        "holdings": holdings, "cash": round(cash, 2),
+        "total_value": round(total_value, 2), "history": history,
+        "trades": trades, "updated_at": today_str,
     })
     return portfolio
+
+def _init_portfolio(records):
+    """Create a brand-new portfolio and make initial buys from current records."""
+    today_str = date.today().isoformat()
+    print(f"  Initialising new portfolio on {today_str} with ${PORTFOLIO_START:,.0f}")
+    portfolio = {
+        "start_date":  today_str,
+        "start_value": PORTFOLIO_START,
+        "cash":        PORTFOLIO_START,
+        "holdings":    {},
+        "history":     [],
+        "spy_history": _get_spy_history(today_str),
+        "trades":      [],
+        "updated_at":  today_str,
+    }
+    return _update_portfolio(records, portfolio)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -448,12 +501,14 @@ def main():
     print("\n── Portfolio update ──────────────────────────────────────────────")
     portfolio = load_portfolio()
     if portfolio is None:
-        print("  No portfolio.json found — run scraper.py first to initialise.")
+        portfolio = _init_portfolio(records)
     else:
-        portfolio = _port_update_grades(records, portfolio)
-        save_portfolio(portfolio)
-        print(f"  Portfolio: ${portfolio['total_value']:,.0f} | "
-              f"{len(portfolio.get('holdings', {}))} holdings")
+        portfolio = _refresh_spy(portfolio)
+        portfolio = _update_portfolio(records, portfolio)
+    save_portfolio(portfolio)
+    print(f"  Portfolio: ${portfolio['total_value']:,.0f} | "
+          f"{len(portfolio.get('holdings', {}))} holdings | "
+          f"${portfolio['cash']:,.0f} cash")
 
 
 if __name__ == "__main__":
