@@ -25,8 +25,8 @@ PORTFOLIO_FILE  = "portfolio.json"
 DELAY_BETWEEN   = 0.8   # seconds between tickers
 MAX_RETRIES     = 3
 PORTFOLIO_START = 1_000_000.0   # starting cash
-BUY_THRESHOLD   = 70.0          # buy stocks with overall >= 70 (≈ C or better)
-SELL_THRESHOLD  = 65.0          # sell stocks with overall < 65
+BUY_THRESHOLD   = 75.0          # buy A and B rated stocks (score >= 75)
+SELL_THRESHOLD  = 68.0          # sell when grade drops to C (score < 68)
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
 
@@ -455,28 +455,48 @@ def score_interp(value, breakpoints, reverse=False):
                 return round(lo_s + t * (hi_s - lo_s), 3)
     return None
 
-# Growth metric breakpoints  (value → score 0–10)
-BP_REV_GROWTH  = [(-20,0),(0,2),(5,4),(10,6),(20,8),(40,10)]    # Rev YoY %
-BP_EPS_GROWTH  = [(-20,0),(0,2),(5,4),(15,6),(25,8),(50,10)]    # EPS YoY %
-BP_ACCEL       = [(-20,0),(-5,2),(-1,4),(1,6),(5,8),(15,10)]    # pp acceleration
-BP_SURPRISE    = [(-10,0),(-2,3),(0,5),(2,7),(5,9),(10,10)]     # EPS surprise %
+# ── Breakpoints recalibrated for >$20B large-cap universe ─────────────────────
+# Target distribution: median large cap → C (70-79), good → B (80-89), excellent → A (90+)
+# A stock growing revenue 6% YoY, beating estimates, with solid margins should score ~72-75.
+# Only genuinely top-quartile metrics across the board should reach 90+.
 
-# Valuation (reverse=True — lower is better for growth stocks)
-BP_FWD_PE      = [(5,10),(15,9),(25,7),(35,5),(45,3),(60,1),(80,0)]
-BP_PEG         = [(0.5,10),(1.0,9),(1.5,7),(2.0,5),(3.0,3),(4.0,1),(6.0,0)]
-BP_EV_EBITDA   = [(5,10),(10,8),(15,7),(20,6),(30,4),(45,2),(60,0)]
-BP_PS          = [(0.5,10),(2,8),(5,6),(8,5),(12,3),(20,1),(30,0)]
+# Growth  (value → score 0–10)
+# Large-cap median rev growth ~4-6% → score ~6 (middle of range)
+BP_REV_GROWTH  = [(-15,0),(-5,2),(0,4),(4,6),(8,7),(15,8),(25,9),(40,10)]
+# EPS median ~5-10% → score ~6
+BP_EPS_GROWTH  = [(-20,0),(-5,2),(0,4),(5,6),(12,7),(22,8),(38,9),(60,10)]
+# Acceleration: ±3pp noise; >6pp genuinely accelerating → score ~7
+BP_ACCEL       = [(-15,0),(-6,2),(-2,5),(2,6.5),(6,7.5),(12,9),(20,10)]
+# EPS surprise: beating by 3-5% is normal for large caps → score ~6
+BP_SURPRISE    = [(-15,0),(-5,3),(0,5),(3,6.5),(6,7.5),(10,9),(15,10)]
 
-# Profitability
-BP_GROSS_MGN   = [(0,0),(10,2),(25,4),(40,6),(55,8),(70,10)]
-BP_OP_MGN      = [(-20,0),(0,2),(8,4),(15,6),(25,8),(40,10)]
-BP_ROE         = [(-20,0),(0,2),(8,4),(15,6),(25,8),(40,10)]
-BP_ROA         = [(-10,0),(0,2),(3,4),(7,6),(12,8),(20,10)]
-BP_DE          = [(0,10),(0.3,9),(0.8,7),(1.5,5),(3.0,3),(5.0,1),(10,0)]  # reverse
+# Valuation — growth stocks trade at premium; calibrate for large-cap growth universe
+# Fwd P/E: median ~22x; 22x → score ~6; <15 cheap; >55 very expensive
+BP_FWD_PE      = [(8,10),(14,8.5),(20,7),(28,5.5),(38,3.5),(50,2),(70,0)]
+# PEG: 2-3x is normal for large-cap growth; <1.5 great; >5 expensive
+BP_PEG         = [(0.5,10),(1.0,8.5),(1.8,7),(2.5,5.5),(3.5,4),(5.0,2),(8.0,0)]
+# EV/EBITDA: median ~16x; 16x → score ~6
+BP_EV_EBITDA   = [(5,10),(10,8),(16,6),(24,4.5),(33,3),(48,1.5),(65,0)]
+# P/S: sector-dependent; 5x → score ~6 for growth universe
+BP_PS          = [(0.3,10),(1,8),(3,6.5),(6,5.5),(10,4),(18,2),(30,0)]
 
-# Momentum
-BP_PERF_52W    = [(-40,0),(-15,2),(0,4),(15,6),(30,8),(60,10)]
-BP_UPSIDE      = [(-20,0),(0,4),(5,5),(15,7),(30,9),(50,10)]
+# Profitability — calibrated to large-cap norms
+# Gross margin: 30% → score ~6; tech (60%+) scores 9+
+BP_GROSS_MGN   = [(-5,0),(5,3),(15,5),(30,6.5),(45,7.5),(60,9),(75,10)]
+# Operating margin: 12-15% median → score ~6
+BP_OP_MGN      = [(-20,0),(-5,2),(0,4),(5,5.5),(13,6.5),(22,8),(33,9.5),(42,10)]
+# ROE: S&P 500 median ~18%; 18% → score ~6.5
+BP_ROE         = [(-20,0),(0,3),(5,5),(13,6.5),(22,7.5),(33,9),(50,10)]
+# ROA: median ~5-7%; 6% → score ~6
+BP_ROA         = [(-10,0),(0,3),(2,5),(5,6),(9,7.5),(14,9),(22,10)]
+# D/E: 0-1x normal; >3x concerning
+BP_DE          = [(0,10),(0.5,8.5),(1.0,7),(1.8,5.5),(3.0,3.5),(5.0,1.5),(10,0)]
+
+# Momentum — market returns ~10% annually; beating market is good
+# 52W perf: 10% → score ~6 (in line with market); >30% outperforming
+BP_PERF_52W    = [(-40,0),(-20,2),(-5,4),(0,5),(10,6),(22,7.5),(38,9),(65,10)]
+# Analyst upside: consensus avg ~8-12% above price → score ~6
+BP_UPSIDE      = [(-20,0),(-5,3),(0,5),(8,6.5),(15,7.5),(25,8.5),(40,9.5),(55,10)]
 
 def score_analyst_rec(val):
     if val is None: return None
@@ -573,10 +593,10 @@ def score_record(raw):
 
     grade = "-"
     if overall is not None:
-        if overall >= 90:   grade = "A"
-        elif overall >= 80: grade = "B"
-        elif overall >= 70: grade = "C"
-        elif overall >= 60: grade = "D"
+        if overall >= 81:   grade = "A"
+        elif overall >= 75: grade = "B"
+        elif overall >= 68: grade = "C"
+        elif overall >= 58: grade = "D"
         else:               grade = "F"
 
     grade_color = {"A":"grade-a","B":"grade-b","C":"grade-c",
