@@ -1,0 +1,61 @@
+{
+  "start_date": "2026-03-03",
+  "start_value": 1000000.0,
+  "cash": 6640.19,
+  "holdings": {
+    "TPR": {
+      "shares": 2145.823297,
+      "cost_basis": 156.42,
+      "last_price": 156.42,
+      "bought_date": "2026-03-03"
+    },
+    "ZM": {
+      "shares": 4570.140447,
+      "cost_basis": 72.72,
+      "last_price": 72.72,
+      "bought_date": "2026-03-03"
+    },
+    "UHS": {
+      "shares": 1576.249939,
+      "cost_basis": 206.42,
+      "last_price": 206.42,
+      "bought_date": "2026-03-03"
+    }
+  },
+  "history": [
+    {
+      "date": "2026-03-03",
+      "value": 1000000.0,
+      "cash": 6640.19
+    }
+  ],
+  "spy_history": [],
+  "trades": [
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "TPR",
+      "shares": 2145.823297,
+      "price": 156.42,
+      "cost": 335649.68
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "ZM",
+      "shares": 4570.140447,
+      "price": 72.72,
+      "cost": 332340.61
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "UHS",
+      "shares": 1576.249939,
+      "price": 206.42,
+      "cost": 325369.51
+    }
+  ],
+  "updated_at": "2026-03-03",
+  "total_value": 1000000.0
+}
