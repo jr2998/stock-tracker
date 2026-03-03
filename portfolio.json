@@ -1,7 +1,7 @@
 {
   "start_date": "2026-03-03",
   "start_value": 1000000.0,
-  "cash": 48.55,
+  "cash": 0.97,
   "holdings": {
     "TPR": {
       "shares": 872.714363,
@@ -55,6 +55,12 @@
       "shares": 34.533442,
       "cost_basis": 68.89,
       "last_price": 68.89,
+      "bought_date": "2026-03-03"
+    },
+    "KEY": {
+      "shares": 2.324328,
+      "cost_basis": 20.47,
+      "last_price": 20.47,
       "bought_date": "2026-03-03"
     }
   },
@@ -143,8 +149,16 @@
       "shares": 34.533442,
       "price": 68.89,
       "cost": 2379.01
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "KEY",
+      "shares": 2.324328,
+      "price": 20.47,
+      "cost": 47.58
     }
   ],
   "updated_at": "2026-03-03",
-  "total_value": 998256.96
+  "total_value": 998256.95
 }
