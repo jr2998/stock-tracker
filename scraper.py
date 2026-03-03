@@ -1,11 +1,10 @@
 """
 scraper.py  —  Stock Tracker v3
-Fetches fundamentals for all tickers in the universe via yfinance,
-scores each metric, assigns an A–F grade, writes data.json.
-Also manages portfolio.json (simulated portfolio based on grades).
+Fetches raw fundamentals for all tickers and writes raw_data.json.
+Does NOT score or grade — run grader.py after this to produce data.json.
 
-Run:  python scraper.py
-Output: data.json, portfolio.json
+Pipeline:  scraper.py  →  grader.py  →  generate_html.py
+Output:    raw_data.json  (this file),  data.json + portfolio.json (grader)
 """
 
 import json
@@ -20,13 +19,13 @@ import pandas as pd
 import numpy as np
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-OUTPUT_FILE     = "data.json"
+OUTPUT_FILE     = "raw_data.json"
 PORTFOLIO_FILE  = "portfolio.json"
 DELAY_BETWEEN   = 0.8   # seconds between tickers
 MAX_RETRIES     = 3
 PORTFOLIO_START = 1_000_000.0   # starting cash
-BUY_THRESHOLD   = 75.0          # buy A and B rated stocks (score >= 75)
-SELL_THRESHOLD  = 68.0          # sell when grade drops to C (score < 68)
+BUY_THRESHOLD   = 65.0          # buy A and B rated stocks (score >= 65)
+SELL_THRESHOLD  = 52.0          # sell when grade drops to C (score < 52)
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
 
@@ -445,272 +444,6 @@ def fetch_ticker_data(symbol):
                 return None
 
 
-# ─── Scoring ──────────────────────────────────────────────────────────────────
-#
-# Each metric scores 0–10 via interpolation (not stepped buckets).
-# Category averages are weighted:
-#   Growth       55%  (heavily favored — this is a growth stock model)
-#   Profitability 20%
-#   Valuation    15%
-#   Momentum     10%
-#
-# Final score = 0–100.  Grades: A=90-100, B=80-89, C=70-79, D=60-69, F<60.
-
-FINANCIALS_SECTORS = {"Financial Services", "Financials"}
-UTILITIES_SECTORS  = {"Utilities"}
-
-def score_interp(value, breakpoints, reverse=False):
-    """
-    Smoothly interpolate a 0–10 score from a list of (threshold, score) pairs.
-    breakpoints: list of (value, score) sorted by value ascending.
-    reverse=True: lower value → higher score (clamp and invert).
-    Returns None if value is None.
-    """
-    if value is None:
-        return None
-    bp = breakpoints
-    if reverse:
-        # Mirror: high raw value → low score
-        v = value
-        # Clamp to range
-        if v <= bp[0][0]:  return 10.0
-        if v >= bp[-1][0]: return 0.0
-        for i in range(len(bp)-1):
-            lo_v, lo_s = bp[i]
-            hi_v, hi_s = bp[i+1]
-            if lo_v <= v <= hi_v:
-                t = (v - lo_v) / (hi_v - lo_v)
-                return round(lo_s + t * (hi_s - lo_s), 3)
-    else:
-        v = value
-        if v <= bp[0][0]:  return 0.0
-        if v >= bp[-1][0]: return 10.0
-        for i in range(len(bp)-1):
-            lo_v, lo_s = bp[i]
-            hi_v, hi_s = bp[i+1]
-            if lo_v <= v <= hi_v:
-                t = (v - lo_v) / (hi_v - lo_v)
-                return round(lo_s + t * (hi_s - lo_s), 3)
-    return None
-
-# ── Breakpoints recalibrated for >$20B large-cap universe ─────────────────────
-# Target distribution: median large cap → C (70-79), good → B (80-89), excellent → A (90+)
-# A stock growing revenue 6% YoY, beating estimates, with solid margins should score ~72-75.
-# Only genuinely top-quartile metrics across the board should reach 90+.
-
-# Growth  (value → score 0–10)
-# Large-cap median rev growth ~4-6% → score ~6 (middle of range)
-BP_REV_GROWTH  = [(-15,0),(-5,2),(0,4),(4,6),(8,7),(15,8),(25,9),(40,10)]
-# EPS median ~5-10% → score ~6
-BP_EPS_GROWTH  = [(-20,0),(-5,2),(0,4),(5,6),(12,7),(22,8),(38,9),(60,10)]
-# Acceleration: ±3pp noise; >6pp genuinely accelerating → score ~7
-BP_ACCEL       = [(-15,0),(-6,2),(-2,5),(2,6.5),(6,7.5),(12,9),(20,10)]
-# EPS surprise: beating by 3-5% is normal for large caps → score ~6
-BP_SURPRISE    = [(-15,0),(-5,3),(0,5),(3,6.5),(6,7.5),(10,9),(15,10)]
-
-# Valuation — growth stocks trade at premium; calibrate for large-cap growth universe
-# Fwd P/E: median ~22x; 22x → score ~6; <15 cheap; >55 very expensive
-BP_FWD_PE      = [(8,10),(14,8.5),(20,7),(28,5.5),(38,3.5),(50,2),(70,0)]
-# PEG: 2-3x is normal for large-cap growth; <1.5 great; >5 expensive
-BP_PEG         = [(0.5,10),(1.0,8.5),(1.8,7),(2.5,5.5),(3.5,4),(5.0,2),(8.0,0)]
-# EV/EBITDA: median ~16x; 16x → score ~6
-BP_EV_EBITDA   = [(5,10),(10,8),(16,6),(24,4.5),(33,3),(48,1.5),(65,0)]
-# P/S: sector-dependent; 5x → score ~6 for growth universe
-BP_PS          = [(0.3,10),(1,8),(3,6.5),(6,5.5),(10,4),(18,2),(30,0)]
-
-# Profitability — calibrated to large-cap norms
-# Gross margin: 30% → score ~6; tech (60%+) scores 9+
-BP_GROSS_MGN   = [(-5,0),(5,3),(15,5),(30,6.5),(45,7.5),(60,9),(75,10)]
-# Operating margin: 12-15% median → score ~6
-BP_OP_MGN      = [(-20,0),(-5,2),(0,4),(5,5.5),(13,6.5),(22,8),(33,9.5),(42,10)]
-# ROE: S&P 500 median ~18%; 18% → score ~6.5
-BP_ROE         = [(-20,0),(0,3),(5,5),(13,6.5),(22,7.5),(33,9),(50,10)]
-# ROA: median ~5-7%; 6% → score ~6
-BP_ROA         = [(-10,0),(0,3),(2,5),(5,6),(9,7.5),(14,9),(22,10)]
-# D/E: 0-1x normal; >3x concerning
-BP_DE          = [(0,10),(0.5,8.5),(1.0,7),(1.8,5.5),(3.0,3.5),(5.0,1.5),(10,0)]
-
-# Momentum — market returns ~10% annually; beating market is good
-# 52W perf: 10% → score ~6 (in line with market); >30% outperforming
-BP_PERF_52W    = [(-40,0),(-20,2),(-5,4),(0,5),(10,6),(22,7.5),(38,9),(65,10)]
-# Analyst upside: consensus avg ~8-12% above price → score ~6
-BP_UPSIDE      = [(-20,0),(-5,3),(0,5),(8,6.5),(15,7.5),(25,8.5),(40,9.5),(55,10)]
-
-def score_analyst_rec(val):
-    if val is None: return None
-    # 1=Strong Buy→10, 5=Strong Sell→0
-    return round(max(0, min(10, (5 - val) / 4 * 10)), 2)
-
-def score_record(raw):
-    sector = raw.get("sector", "")
-    is_fin  = sector in FINANCIALS_SECTORS
-    is_util = sector in UTILITIES_SECTORS
-    s = {}
-
-    # ── Growth (55%) ──────────────────────────────────────────────────────
-    s["rev_growth_ttm"]    = score_interp(raw["rev_growth_ttm"],  BP_REV_GROWTH)
-    s["eps_growth_ttm"]    = score_interp(raw["eps_growth_ttm"],  BP_EPS_GROWTH)
-    s["rev_accel"]         = score_interp(raw["rev_accel"],       BP_ACCEL)
-    s["eps_accel"]         = score_interp(raw["eps_accel"],       BP_ACCEL)
-    s["earnings_surprise"] = score_interp(raw["earnings_surprise"], BP_SURPRISE)
-
-    # Within growth: weight rev/eps growth more heavily than accel/surprise
-    growth_weights = {
-        "rev_growth_ttm":  0.30,
-        "eps_growth_ttm":  0.30,
-        "rev_accel":       0.15,
-        "eps_accel":       0.15,
-        "earnings_surprise": 0.10,
-    }
-    gw_sum = gw_total = 0
-    for k, w in growth_weights.items():
-        if s[k] is not None:
-            gw_sum   += s[k] * w
-            gw_total += w
-    growth_avg = round(gw_sum / gw_total, 3) if gw_total > 0 else None
-
-    # ── Valuation (15%) ───────────────────────────────────────────────────
-    # For growth stocks, P/S and EV/EBITDA matter more than raw P/E;
-    # PEG is the most important because it normalises price for growth.
-    s["peg_ratio"]  = score_interp(raw["peg_ratio"],   BP_PEG,      reverse=True)
-    s["forward_pe"] = score_interp(raw["forward_pe"],  BP_FWD_PE,   reverse=True)
-    s["ev_ebitda"]  = score_interp(raw["ev_ebitda"],   BP_EV_EBITDA,reverse=True)
-    s["price_sales"]= score_interp(raw["price_sales"], BP_PS,       reverse=True)
-
-    val_weights = {"peg_ratio":0.40, "forward_pe":0.25,
-                   "ev_ebitda":0.20, "price_sales":0.15}
-    vw_sum = vw_total = 0
-    for k, w in val_weights.items():
-        if s[k] is not None:
-            vw_sum   += s[k] * w
-            vw_total += w
-    val_avg = round(vw_sum / vw_total, 3) if vw_total > 0 else None
-
-    # ── Profitability (20%) ───────────────────────────────────────────────
-    s["gross_margin"]     = score_interp(raw["gross_margin"],     BP_GROSS_MGN)
-    s["operating_margin"] = score_interp(raw["operating_margin"], BP_OP_MGN)
-    s["roe"]              = score_interp(raw["roe"],              BP_ROE)
-    s["roa"]              = score_interp(raw["roa"],              BP_ROA)
-    # D/E not meaningful for banks/utilities
-    s["debt_equity"] = None if (is_fin or is_util) else \
-                       score_interp(raw["debt_equity"], BP_DE, reverse=True)
-
-    prof_weights = {"gross_margin":0.30, "operating_margin":0.30,
-                    "roe":0.20, "roa":0.10, "debt_equity":0.10}
-    pw_sum = pw_total = 0
-    for k, w in prof_weights.items():
-        if s[k] is not None:
-            pw_sum   += s[k] * w
-            pw_total += w
-    prof_avg = round(pw_sum / pw_total, 3) if pw_total > 0 else None
-
-    # ── Momentum (10%) ────────────────────────────────────────────────────
-    s["perf_52w"]       = score_interp(raw["perf_52w"],       BP_PERF_52W)
-    s["analyst_upside"] = score_interp(raw["analyst_upside"], BP_UPSIDE)
-    s["analyst_rec"]    = score_analyst_rec(raw["analyst_rec"])
-
-    mom_weights = {"perf_52w":0.40, "analyst_upside":0.35, "analyst_rec":0.25}
-    mw_sum = mw_total = 0
-    for k, w in mom_weights.items():
-        if s[k] is not None:
-            mw_sum   += s[k] * w
-            mw_total += w
-    mom_avg = round(mw_sum / mw_total, 3) if mw_total > 0 else None
-
-    # ── Weighted overall → 0–100 ──────────────────────────────────────────
-    weighted_sum = weighted_total = 0
-    for avg, w in [(growth_avg, 0.55), (prof_avg, 0.20),
-                   (val_avg, 0.15),    (mom_avg, 0.10)]:
-        if avg is not None:
-            weighted_sum   += avg * w
-            weighted_total += w
-
-    # Each category avg is 0–10; multiply by 10 to get 0–100
-    overall_raw = (weighted_sum / weighted_total * 10) if weighted_total > 0 else None
-    overall     = round(overall_raw, 1) if overall_raw is not None else None
-
-    grade = "-"
-    if overall is not None:
-        if overall >= 81:   grade = "A"
-        elif overall >= 75: grade = "B"
-        elif overall >= 68: grade = "C"
-        elif overall >= 58: grade = "D"
-        else:               grade = "F"
-
-    grade_color = {"A":"grade-a","B":"grade-b","C":"grade-c",
-                   "D":"grade-d","F":"grade-f"}.get(grade, "neutral")
-
-    return {
-        **raw,
-        "scores":      s,
-        "growth_avg":  round(growth_avg * 10, 1) if growth_avg is not None else None,
-        "val_avg":     round(val_avg    * 10, 1) if val_avg    is not None else None,
-        "prof_avg":    round(prof_avg   * 10, 1) if prof_avg   is not None else None,
-        "mom_avg":     round(mom_avg    * 10, 1) if mom_avg    is not None else None,
-        "overall":     overall,
-        "grade":       grade,
-        "grade_color": grade_color,
-    }
-
-
-
-# ─── Format helpers ───────────────────────────────────────────────────────────
-
-def fmt_pct(val, d=1):
-    return f"{val:+.{d}f}%" if val is not None else None
-
-def fmt_num(val, d=1):
-    return f"{val:.{d}f}x" if val is not None else None
-
-def fmt_cap(b):
-    if b is None: return None
-    return f"${b/1000:.2f}T" if b >= 1000 else f"${b:.1f}B"
-
-def fmt_price(val):
-    return f"${val:,.2f}" if val is not None else None
-
-def format_record(rec):
-    r = rec
-    return {
-        "ticker":           r["ticker"],
-        "name":             r["name"],
-        "sector":           r["sector"],
-        "industry":         r["industry"],
-        "grade":            r["grade"],
-        "grade_color":      r["grade_color"],
-        "overall":          r["overall"],
-        "growth_avg":       r["growth_avg"],
-        "val_avg":          r["val_avg"],
-        "prof_avg":         r["prof_avg"],
-        "mom_avg":          r["mom_avg"],
-        "market_cap":       fmt_cap(r["market_cap_b"]),
-        "market_cap_b":     r["market_cap_b"],
-        "price":            fmt_price(r["price"]),
-        "price_raw":        r["price"],
-        "target_price":     fmt_price(r["target_price"]),
-        "analyst_upside":   fmt_pct(r["analyst_upside"]),
-        "analyst_rec_raw":  r["analyst_rec"],
-        "analyst_rec_label": r.get("analyst_rec_label"),
-        "perf_52w":         fmt_pct(r["perf_52w"]),
-        "forward_pe":       fmt_num(r["forward_pe"]),
-        "peg_ratio":        fmt_num(r["peg_ratio"]),
-        "ev_ebitda":        fmt_num(r["ev_ebitda"]),
-        "price_sales":      fmt_num(r["price_sales"]),
-        "rev_growth_ttm":   fmt_pct(r["rev_growth_ttm"]),
-        "eps_growth_ttm":   fmt_pct(r["eps_growth_ttm"]),
-        "rev_accel":        fmt_pct(r["rev_accel"]),
-        "eps_accel":        fmt_pct(r["eps_accel"]),
-        "earnings_surprise":fmt_pct(r["earnings_surprise"]),
-        "gross_margin":     fmt_pct(r["gross_margin"]),
-        "operating_margin": fmt_pct(r["operating_margin"]),
-        "profit_margin":    fmt_pct(r["profit_margin"]),
-        "roe":              fmt_pct(r["roe"]),
-        "roa":              fmt_pct(r["roa"]),
-        "debt_equity":      fmt_num(r["debt_equity"], 2),
-        "next_earnings":    r["next_earnings"],
-        "scores":           r["scores"],
-    }
-
 
 # ─── Portfolio management ─────────────────────────────────────────────────────
 
@@ -936,17 +669,16 @@ def main():
                 print("skip")
                 skipped += 1
             else:
-                scored    = score_record(raw)
-                formatted = format_record(scored)
-                records.append(formatted)
-                print(f"✓ {raw['name'][:32]:<32} {fmt_cap(raw['market_cap_b']):>8}  "
-                      f"grade={scored['grade']}({scored['overall'] or '-'})")
+                records.append(raw)
+                cap_str = fmt_cap(raw.get("market_cap_b"))
+                print(f"✓ {raw['name'][:32]:<32} {cap_str or '':>8}")
         except Exception as e:
             print(f"ERROR: {e}")
             errors += 1
         time.sleep(DELAY_BETWEEN)
 
-    records.sort(key=lambda x: (-(x["overall"] or -99), x["ticker"]))
+    # Sort by market cap descending for readability
+    records.sort(key=lambda x: -(x.get("market_cap_b") or 0))
 
     end_time = datetime.now(timezone.utc)
     out = {
@@ -956,24 +688,11 @@ def main():
     }
     Path(OUTPUT_FILE).write_text(json.dumps(out, indent=2, default=str))
 
-    # ── Portfolio ──────────────────────────────────────────────────────────
-    print("\n── Portfolio update ──────────────────────────────────────────────")
-    portfolio = load_portfolio()
-    if portfolio is None or RESET_PORTFOLIO:
-        if RESET_PORTFOLIO and portfolio is not None:
-            print("  Resetting portfolio (RESET_PORTFOLIO=True)")
-        portfolio = init_portfolio(records)
-    else:
-        portfolio = refresh_spy_history(portfolio)
-        portfolio = update_portfolio(records, portfolio)
-    save_portfolio(portfolio)
-
     print(f"\n=== Done ===")
-    print(f"  Stocks:  {len(records)} kept, {skipped} skipped, {errors} errors")
+    print(f"  Stocks:  {len(records)} fetched, {skipped} skipped, {errors} errors")
     print(f"  Runtime: {(end_time-start_time).seconds//60}m {(end_time-start_time).seconds%60}s")
-    holdings_count = len(portfolio.get("holdings", {}))
-    print(f"  Portfolio: ${portfolio['total_value']:,.0f} | "
-          f"{holdings_count} holdings | ${portfolio['cash']:,.0f} cash")
+    print(f"  Output:  {OUTPUT_FILE}")
+    print(f"\n  → Now run:  python grader.py")
 
 
 if __name__ == "__main__":
