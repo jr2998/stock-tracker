@@ -1,24 +1,54 @@
 {
   "start_date": "2026-03-03",
   "start_value": 1000000.0,
-  "cash": 6640.19,
+  "cash": 2427.56,
   "holdings": {
     "TPR": {
-      "shares": 2145.823297,
+      "shares": 872.714363,
       "cost_basis": 156.42,
       "last_price": 156.42,
       "bought_date": "2026-03-03"
     },
     "ZM": {
-      "shares": 4570.140447,
+      "shares": 1733.310807,
       "cost_basis": 72.72,
       "last_price": 72.72,
       "bought_date": "2026-03-03"
     },
-    "UHS": {
-      "shares": 1576.249939,
-      "cost_basis": 206.42,
-      "last_price": 206.42,
+    "CTRA": {
+      "shares": 3995.093086,
+      "cost_basis": 31.51,
+      "last_price": 31.51,
+      "bought_date": "2026-03-03"
+    },
+    "BR": {
+      "shares": 660.314983,
+      "cost_basis": 186.5,
+      "last_price": 186.5,
+      "bought_date": "2026-03-03"
+    },
+    "MCO": {
+      "shares": 263.86562,
+      "cost_basis": 466.1,
+      "last_price": 466.1,
+      "bought_date": "2026-03-03"
+    },
+    "PEG": {
+      "shares": 1445.951146,
+      "cost_basis": 84.5,
+      "last_price": 84.5,
+      "bought_date": "2026-03-03"
+    },
+    "MSFT": {
+      "shares": 305.760668,
+      "cost_basis": 398.55,
+      "last_price": 398.55,
+      "bought_date": "2026-03-03"
+    },
+    "AMT": {
+      "shares": 625.396522,
+      "cost_basis": 190.2,
+      "last_price": 190.2,
       "bought_date": "2026-03-03"
     }
   },
@@ -26,34 +56,79 @@
     {
       "date": "2026-03-03",
       "value": 1000000.0,
-      "cash": 6640.19
+      "cash": 2427.56
     }
   ],
-  "spy_history": [],
+  "spy_history": [
+    {
+      "date": "2026-03-02",
+      "value": 1000000.0
+    }
+  ],
   "trades": [
     {
       "date": "2026-03-03",
       "action": "BUY",
       "ticker": "TPR",
-      "shares": 2145.823297,
+      "shares": 872.714363,
       "price": 156.42,
-      "cost": 335649.68
+      "cost": 136509.98
     },
     {
       "date": "2026-03-03",
       "action": "BUY",
       "ticker": "ZM",
-      "shares": 4570.140447,
+      "shares": 1733.310807,
       "price": 72.72,
-      "cost": 332340.61
+      "cost": 126046.36
     },
     {
       "date": "2026-03-03",
       "action": "BUY",
-      "ticker": "UHS",
-      "shares": 1576.249939,
-      "price": 206.42,
-      "cost": 325369.51
+      "ticker": "CTRA",
+      "shares": 3995.093086,
+      "price": 31.51,
+      "cost": 125885.38
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "BR",
+      "shares": 660.314983,
+      "price": 186.5,
+      "cost": 123148.74
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "MCO",
+      "shares": 263.86562,
+      "price": 466.1,
+      "cost": 122987.77
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "PEG",
+      "shares": 1445.951146,
+      "price": 84.5,
+      "cost": 122182.87
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "MSFT",
+      "shares": 305.760668,
+      "price": 398.55,
+      "cost": 121860.91
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "AMT",
+      "shares": 625.396522,
+      "price": 190.2,
+      "cost": 118950.42
     }
   ],
   "updated_at": "2026-03-03",
