@@ -21,8 +21,8 @@ import numpy as np
 # ─── Config ───────────────────────────────────────────────────────────────────
 OUTPUT_FILE     = "raw_data.json"
 PORTFOLIO_FILE  = "portfolio.json"
-DELAY_BETWEEN   = 0.8   # seconds between tickers
-MAX_RETRIES     = 3
+DELAY_BETWEEN   = 1.2   # seconds between tickers (keep Yahoo rate limits happy)
+MAX_RETRIES     = 4
 PORTFOLIO_START = 1_000_000.0   # starting cash (used for SPY benchmark scaling)
 
 # ─── Ticker universe ──────────────────────────────────────────────────────────
@@ -89,8 +89,20 @@ EXTRA_TICKERS = [
 ]
 
 def get_ticker_universe():
-    combined = sorted(set(SP500_TICKERS + EXTRA_TICKERS))
-    print(f"Ticker universe: {len(combined)} tickers")
+    """Return list of (symbol, require_min_cap) tuples.
+    SP500 tickers are fetched regardless of market cap.
+    EXTRA_TICKERS require the $20B minimum cap to be included.
+    """
+    sp500_set = set(SP500_TICKERS)
+    extra_set = set(EXTRA_TICKERS) - sp500_set   # avoid double-counting
+    combined  = (
+        [(t, False) for t in sorted(sp500_set)] +
+        [(t, True)  for t in sorted(extra_set)]
+    )
+    # Sort by symbol but keep the require_min_cap flag
+    combined.sort(key=lambda x: x[0])
+    print(f"Ticker universe: {len(combined)} tickers "
+          f"({len(sp500_set)} S&P 500 + {len(extra_set)} extras)")
     return combined
 
 
@@ -123,14 +135,29 @@ def calc_growth(new_val, old_val):
 
 # ─── Per-ticker fetch ─────────────────────────────────────────────────────────
 
-def fetch_ticker_data(symbol):
+def fetch_ticker_data(symbol, require_min_cap=True):
+    # Some tickers use formats Yahoo Finance doesn't recognise directly.
+    yf_symbol = {"BF-B": "BF-B", "BRK-B": "BRK-B"}.get(symbol, symbol)
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            tk   = yf.Ticker(symbol)
+            tk   = yf.Ticker(yf_symbol)
             info = tk.info or {}
 
+            # A valid info dict has 30+ keys. Fewer than 10 means Yahoo returned
+            # a minimal/empty response — almost always rate limiting or a transient
+            # failure. Don't silently skip: raise so the retry loop can back off.
+            if len(info) < 10:
+                raise ValueError(f"thin info dict ({len(info)} keys) — likely rate limited")
+
             market_cap = safe(info.get("marketCap"))
-            if market_cap is None or market_cap < 20e9:   # require >$20B market cap
+
+            # For EXTRA_TICKERS (non-index additions) enforce the $20B floor.
+            # For SP500 tickers we track everything regardless of current cap —
+            # many valid index members dip below $20B and are still worth grading.
+            if market_cap is None:
+                return None
+            if require_min_cap and market_cap < 20e9:
                 return None
 
             name     = info.get("longName") or info.get("shortName") or symbol
@@ -460,9 +487,11 @@ def fetch_ticker_data(symbol):
 
         except Exception as e:
             if attempt < MAX_RETRIES:
-                time.sleep(2 ** attempt)
+                wait = 2 ** attempt
+                print(f"retry({attempt})…", end=" ", flush=True)
+                time.sleep(wait)
             else:
-                print(f"    ERROR {symbol}: {e}")
+                print(f"ERROR: {e}")
                 return None
 
 
@@ -518,10 +547,10 @@ def main():
     records = []
     skipped = errors = 0
 
-    for i, symbol in enumerate(tickers, 1):
+    for i, (symbol, req_cap) in enumerate(tickers, 1):
         print(f"  [{i:>3}/{len(tickers)}] {symbol:<8}", end=" ", flush=True)
         try:
-            raw = fetch_ticker_data(symbol)
+            raw = fetch_ticker_data(symbol, require_min_cap=req_cap)
             if raw is None:
                 print("skip")
                 skipped += 1
