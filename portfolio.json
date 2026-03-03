@@ -1,54 +1,60 @@
 {
   "start_date": "2026-03-03",
   "start_value": 1000000.0,
-  "cash": 2427.56,
+  "cash": 48.55,
   "holdings": {
     "TPR": {
       "shares": 872.714363,
       "cost_basis": 156.42,
-      "last_price": 156.42,
+      "last_price": 154.42,
       "bought_date": "2026-03-03"
     },
     "ZM": {
       "shares": 1733.310807,
       "cost_basis": 72.72,
-      "last_price": 72.72,
+      "last_price": 73.5,
       "bought_date": "2026-03-03"
     },
     "CTRA": {
       "shares": 3995.093086,
       "cost_basis": 31.51,
-      "last_price": 31.51,
+      "last_price": 30.9,
       "bought_date": "2026-03-03"
     },
     "BR": {
       "shares": 660.314983,
       "cost_basis": 186.5,
-      "last_price": 186.5,
+      "last_price": 187.51,
       "bought_date": "2026-03-03"
     },
     "MCO": {
       "shares": 263.86562,
       "cost_basis": 466.1,
-      "last_price": 466.1,
+      "last_price": 464.3,
       "bought_date": "2026-03-03"
     },
     "PEG": {
       "shares": 1445.951146,
       "cost_basis": 84.5,
-      "last_price": 84.5,
+      "last_price": 83.96,
       "bought_date": "2026-03-03"
     },
     "MSFT": {
       "shares": 305.760668,
       "cost_basis": 398.55,
-      "last_price": 398.55,
+      "last_price": 403.93,
       "bought_date": "2026-03-03"
     },
     "AMT": {
       "shares": 625.396522,
       "cost_basis": 190.2,
-      "last_price": 190.2,
+      "last_price": 190.25,
+      "bought_date": "2026-03-03"
+    },
+    "MO": {
+      "shares": 34.533442,
+      "cost_basis": 68.89,
+      "last_price": 68.89,
       "bought_date": "2026-03-03"
     }
   },
@@ -61,7 +67,7 @@
   ],
   "spy_history": [
     {
-      "date": "2026-03-02",
+      "date": "2026-03-03",
       "value": 1000000.0
     }
   ],
@@ -129,8 +135,16 @@
       "shares": 625.396522,
       "price": 190.2,
       "cost": 118950.42
+    },
+    {
+      "date": "2026-03-03",
+      "action": "BUY",
+      "ticker": "MO",
+      "shares": 34.533442,
+      "price": 68.89,
+      "cost": 2379.01
     }
   ],
   "updated_at": "2026-03-03",
-  "total_value": 1000000.0
+  "total_value": 998256.96
 }
