@@ -27,8 +27,11 @@ jobs:
           pip install --upgrade pip
           pip install yfinance pandas numpy lxml html5lib beautifulsoup4
 
-      - name: Run scraper
+      - name: Fetch raw data
         run: python scraper.py
+
+      - name: Grade stocks
+        run: python grader.py
 
       - name: Generate HTML
         run: python generate_html.py
@@ -37,6 +40,6 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.json portfolio.json index.html
+          git add raw_data.json data.json portfolio.json index.html
           git diff --cached --quiet || git commit -m "chore: update stock data $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push
