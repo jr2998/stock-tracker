@@ -32,26 +32,25 @@ def build_html(data, portfolio):
   <title>Stock Grader</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <style>
     *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
     :root{{
-      --bg:#0a0c10;--surface:#111318;--surface2:#181c24;
-      --border:#222730;--border2:#2d3340;
-      --text:#dde3ee;--muted:#5a6478;--dim:#8a93a8;
-      --accent:#4fc3f7;--accent-dim:#1a3a4a;
-      --grade-a:#22c55e;--grade-b:#84cc16;--grade-c:#f59e0b;
-      --grade-d:#f97316;--grade-f:#ef4444;
-      --pos:#22c55e;--neg:#ef4444;
-      --mono:'Space Mono',monospace;--sans:'DM Sans',sans-serif;
-      --r:6px;--rl:12px;
+      --bg:#f7f5f0;--surface:#ffffff;--surface2:#f0ece4;
+      --border:#e0dcd4;--border2:#ccc8c0;
+      --text:#1a1a1a;--muted:#888880;--dim:#555550;
+      --accent:#c41e3a;--accent-dim:#fce8eb;
+      --grade-a:#1a1a1a;--grade-b:#3d3d3d;--grade-c:#c41e3a;
+      --grade-d:#e8794a;--grade-f:#aaaaaa;
+      --pos:#2d6e2d;--neg:#c41e3a;
+      --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+      --r:3px;--rl:4px;
     }}
     body{{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px;line-height:1.5;min-height:100vh}}
-    body::before{{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.04) 2px,rgba(0,0,0,0.04) 4px);pointer-events:none;z-index:9999}}
 
     /* ── Nav ── */
-    .nav{{display:flex;align-items:center;gap:0;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100}}
+    .nav{{display:flex;align-items:center;gap:0;padding:0 24px;background:var(--surface);border-bottom:2px solid var(--text);position:sticky;top:0;z-index:100}}
     .nav-brand{{font-family:var(--mono);font-weight:700;font-size:16px;color:var(--text);padding:14px 20px 14px 0;margin-right:12px;border-right:1px solid var(--border)}}
     .nav-brand span{{color:var(--accent)}}
     .nav-tab{{font-family:var(--mono);font-size:12px;padding:16px 18px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent;transition:all .15s;text-transform:uppercase;letter-spacing:.06em;background:none;border-top:none;border-left:none;border-right:none}}
@@ -89,17 +88,17 @@ def build_html(data, portfolio):
     .btn.active{{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}}
 
     /* ── Table ── */
-    .tbl-wrap{{overflow-x:auto;border:1px solid var(--border);border-radius:var(--rl);background:var(--surface);animation:fadeIn .4s ease both}}
+    .tbl-wrap{{overflow-x:auto;border:1px solid var(--border);border-top:2px solid var(--text);border-radius:0;background:var(--surface);animation:fadeIn .4s ease both}}
     table{{width:100%;border-collapse:collapse;font-size:12px}}
     th:nth-child(1),td:nth-child(1){{position:sticky;left:0;z-index:2;background:var(--surface)}}
     th:nth-child(2),td:nth-child(2){{position:sticky;left:58px;z-index:2;background:var(--surface)}}
-    thead th:nth-child(1),thead th:nth-child(2){{z-index:3;background:var(--surface2)}}
-    thead tr{{background:var(--surface2)}}
+    thead th:nth-child(1),thead th:nth-child(2){{z-index:3;background:var(--surface)}}
+    thead tr{{background:var(--surface)}}
     th{{padding:9px 12px;text-align:left;font-family:var(--mono);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;transition:color .15s}}
     th:hover{{color:var(--accent)}}
     th.sorted-asc::after{{content:' ↑';color:var(--accent)}}
     th.sorted-desc::after{{content:' ↓';color:var(--accent)}}
-    th.sec,td.sec{{border-left:2px solid var(--border2)}}
+    th.sec,td.sec{{border-left:2px solid var(--border)}}
     tbody tr{{border-bottom:1px solid var(--border);transition:background .1s}}
     tbody tr:last-child{{border-bottom:none}}
     tbody tr:hover{{background:var(--surface2)!important}}
@@ -107,27 +106,50 @@ def build_html(data, portfolio):
     td{{padding:8px 12px;white-space:nowrap;font-family:var(--mono);font-size:12px;color:var(--dim)}}
     .c-ticker{{font-weight:700;color:var(--text);font-size:13px;min-width:58px}}
     .c-name{{font-family:var(--sans);font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis}}
-    .gb{{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:5px;font-family:var(--mono);font-weight:700;font-size:14px}}
-    .grade-a{{background:rgba(34,197,94,.15);color:var(--grade-a);border:1px solid rgba(34,197,94,.3)}}
-    .grade-b{{background:rgba(132,204,22,.15);color:var(--grade-b);border:1px solid rgba(132,204,22,.3)}}
-    .grade-c{{background:rgba(245,158,11,.15);color:var(--grade-c);border:1px solid rgba(245,158,11,.3)}}
-    .grade-d{{background:rgba(249,115,22,.15);color:var(--grade-d);border:1px solid rgba(249,115,22,.3)}}
-    .grade-f{{background:rgba(239,68,68,.15);color:var(--grade-f);border:1px solid rgba(239,68,68,.3)}}
+    .gb{{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:2px;font-family:var(--mono);font-weight:700;font-size:13px}}
+    .grade-a{{background:#1a1a1a;color:#ffffff;border:none}}
+    .grade-b{{background:#3d3d3d;color:#ffffff;border:none}}
+    .grade-c{{background:#c41e3a;color:#ffffff;border:none}}
+    .grade-d{{background:#e8794a;color:#ffffff;border:none}}
+    .grade-f{{background:#e8e4dc;color:#999;border:1px solid var(--border2)}}
     .pos{{color:var(--pos)}}.neg{{color:var(--neg)}}.neutral{{color:var(--muted)}}
-    .spill{{display:inline-block;padding:2px 7px;border-radius:99px;background:var(--surface2);border:1px solid var(--border2);font-size:10px;color:var(--dim);font-family:var(--sans)}}
+    .spill{{display:inline-block;padding:2px 7px;border-radius:2px;background:var(--surface2);border:1px solid var(--border);font-size:10px;color:var(--dim);font-family:var(--mono);}}
     .scbar{{display:flex;align-items:center;gap:5px}}
     .scbar-wrap{{width:32px;height:4px;background:var(--border2);border-radius:2px;overflow:hidden}}
     .scbar-fill{{height:100%;border-radius:2px}}
     .empty{{text-align:center;padding:50px 20px;color:var(--muted);font-family:var(--mono)}}
+    /* ── Column group headers ── */
+    .th-group{{background:var(--surface)!important;font-family:var(--mono);font-size:9px;font-weight:700;
+      text-transform:uppercase;letter-spacing:.12em;color:var(--muted);padding:5px 12px 4px;
+      border-bottom:2px solid var(--border);text-align:center;cursor:default}}
+    .th-group.grp-info{{color:var(--dim)}}
+    .th-group.grp-growth{{color:#1a1a1a;border-bottom-color:#1a1a1a}}
+    .th-group.grp-val{{color:#c41e3a;border-bottom-color:#c41e3a}}
+    .th-group.grp-quality{{color:#0057a8;border-bottom-color:#0057a8}}
+    .th-group.grp-momentum{{color:#2d6e2d;border-bottom-color:#2d6e2d}}
+    /* ── Tooltips ── */
+    .th-tip{{position:relative}}
+    .th-tip::after{{
+      content:attr(data-tip);
+      position:absolute;top:calc(100% + 6px);left:50%;transform:translateX(-50%);
+      background:#ffffff;color:var(--text);border:1px solid var(--border2);
+      border-top:2px solid var(--text);
+      border-radius:0;padding:8px 10px;font-size:11px;font-family:var(--sans);
+      font-weight:400;letter-spacing:0;text-transform:none;white-space:normal;
+      width:200px;line-height:1.45;z-index:200;
+      opacity:0;pointer-events:none;transition:opacity .15s;
+      box-shadow:0 4px 12px rgba(0,0,0,.12);
+    }}
+    .th-tip:hover::after{{opacity:1}}
     .empty span{{font-size:28px;display:block;margin-bottom:10px}}
 
     /* ── Performance page ── */
     .perf-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}}
-    .kpi{{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:18px 20px}}
+    .kpi{{background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--text);border-radius:0;padding:18px 20px}}
     .kpi-label{{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:6px}}
     .kpi-value{{font-family:var(--mono);font-size:24px;font-weight:700;color:var(--text)}}
     .kpi-sub{{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:4px}}
-    .chart-card{{background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:20px;margin-bottom:24px}}
+    .chart-card{{background:var(--surface);border:1px solid var(--border);border-top:2px solid var(--text);border-radius:0;padding:20px;margin-bottom:24px}}
     .chart-title{{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--text);margin-bottom:16px}}
     .chart-legend{{display:flex;gap:16px;margin-bottom:12px}}
     .chart-legend-item{{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--dim)}}
@@ -141,8 +163,8 @@ def build_html(data, portfolio):
     @keyframes fadeIn{{from{{opacity:0;transform:translateY(5px)}}to{{opacity:1;transform:translateY(0)}}}}
     ::-webkit-scrollbar{{width:5px;height:5px}}
     ::-webkit-scrollbar-track{{background:var(--bg)}}
-    ::-webkit-scrollbar-thumb{{background:var(--border2);border-radius:3px}}
-    ::-webkit-scrollbar-thumb:hover{{background:var(--accent)}}
+    ::-webkit-scrollbar-thumb{{background:var(--border2);border-radius:0}}
+    ::-webkit-scrollbar-thumb:hover{{background:var(--text)}}
   </style>
 </head>
 <body>
@@ -162,7 +184,7 @@ def build_html(data, portfolio):
   <div class="section-header" style="margin-top:24px">
     <div>
       <div class="section-title">Stock Data</div>
-      <div class="section-sub">// S&P 500 + Large Cap Universe · Yahoo Finance</div>
+      <div class="section-sub">S&P 500 + Large Cap Universe · Yahoo Finance</div>
     </div>
     <div style="text-align:right">
       <span class="badge-count" id="visible-count">{total}</span>
@@ -172,11 +194,11 @@ def build_html(data, portfolio):
 
   <div class="legend">
     <span class="legend-label">Grade:</span>
-    <div class="legend-item"><span class="gb grade-a">A</span><span>≥81 Exceptional</span></div>
-    <div class="legend-item"><span class="gb grade-b">B</span><span>75–80 Good</span></div>
-    <div class="legend-item"><span class="gb grade-c">C</span><span>68–74 Average</span></div>
-    <div class="legend-item"><span class="gb grade-d">D</span><span>58–67 Weak</span></div>
-    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;58 Poor</span></div>
+    <div class="legend-item"><span class="gb grade-a">A</span><span>≥78 Exceptional</span></div>
+    <div class="legend-item"><span class="gb grade-b">B</span><span>65–77 Good</span></div>
+    <div class="legend-item"><span class="gb grade-c">C</span><span>52–64 Average</span></div>
+    <div class="legend-item"><span class="gb grade-d">D</span><span>38–51 Weak</span></div>
+    <div class="legend-item"><span class="gb grade-f">F</span><span>&lt;38 Poor</span></div>
   </div>
 
   <div class="controls">
@@ -206,34 +228,43 @@ def build_html(data, portfolio):
 
   <div class="tbl-wrap">
     <table id="stock-table">
-      <thead><tr>
-        <th data-col="ticker">Ticker</th>
-        <th data-col="name">Name</th>
-        <th data-col="grade" class="sec">Grade</th>
-        <th data-col="overall">Score</th>
-        <th data-col="sector" class="sec">Sector</th>
-        <th data-col="market_cap_b">Mkt Cap</th>
-        <th data-col="price_raw">Price</th>
-        <th data-col="perf_52w">52W Perf</th>
-        <th data-col="rev_growth_ttm" class="sec">Rev Grwth</th>
-        <th data-col="eps_growth_ttm">EPS Grwth</th>
-        <th data-col="rev_accel">Rev Accel</th>
-        <th data-col="eps_accel">EPS Accel</th>
-        <th data-col="earnings_surprise">EPS Surpr</th>
-        <th data-col="forward_pe" class="sec">Fwd P/E</th>
-        <th data-col="peg_ratio">PEG</th>
-        <th data-col="ev_ebitda">EV/EBITDA</th>
-        <th data-col="price_sales">P/S</th>
-        <th data-col="gross_margin" class="sec">Gross Mgn</th>
-        <th data-col="operating_margin">Op Mgn</th>
-        <th data-col="roe">ROE</th>
-        <th data-col="roa">ROA</th>
-        <th data-col="debt_equity">D/E</th>
-        <th data-col="analyst_upside" class="sec">Analyst ↑</th>
-        <th data-col="analyst_rec_label">Consensus</th>
-        <th data-col="target_price">Target</th>
-        <th data-col="next_earnings">Earnings</th>
-      </tr></thead>
+      <thead>
+        <tr>
+          <th colspan="8" class="th-group grp-info">Info</th>
+          <th colspan="5" class="th-group grp-growth sec">▲ Growth</th>
+          <th colspan="4" class="th-group grp-val sec">$ Valuation</th>
+          <th colspan="5" class="th-group grp-quality sec">◆ Quality</th>
+          <th colspan="4" class="th-group grp-momentum sec">→ Momentum</th>
+        </tr>
+        <tr>
+          <th data-col="ticker" class="th-tip" data-tip="Stock ticker symbol">Ticker</th>
+          <th data-col="name" class="th-tip" data-tip="Company name">Name</th>
+          <th data-col="grade" class="sec th-tip" data-tip="Overall letter grade: A (≥78) B (≥65) C (≥52) D (≥38) F (&lt;38)">Grade</th>
+          <th data-col="overall" class="th-tip" data-tip="Composite score 0–100 across Growth, Quality, Valuation and Momentum">Score</th>
+          <th data-col="sector" class="sec th-tip" data-tip="GICS sector classification">Sector</th>
+          <th data-col="market_cap_b" class="th-tip" data-tip="Market capitalisation (price × shares outstanding)">Mkt Cap</th>
+          <th data-col="price_raw" class="th-tip" data-tip="Current share price">Price</th>
+          <th data-col="perf_52w" class="th-tip" data-tip="Price return over the trailing 52 weeks">52W Perf</th>
+          <th data-col="rev_growth_ttm" class="sec th-tip" data-tip="Trailing-twelve-month revenue growth year-over-year. Primary growth signal (14% of score).">Rev Grwth</th>
+          <th data-col="eps_growth_ttm" class="th-tip" data-tip="Trailing-twelve-month EPS growth year-over-year. Primary earnings signal (14% of score).">EPS Grwth</th>
+          <th data-col="rev_accel" class="th-tip" data-tip="Change in revenue YoY growth rate vs the prior quarter (pp). Positive = growth is speeding up. Key differentiator (10% of score).">Rev Accel</th>
+          <th data-col="eps_accel" class="th-tip" data-tip="Change in EPS YoY growth rate vs the prior quarter (pp). Markets pay a premium for accelerating earnings (8% of score).">EPS Accel</th>
+          <th data-col="earnings_surprise" class="th-tip" data-tip="Most recent quarter EPS beat vs analyst consensus (%). Beaten-and-raised is a near-term catalyst.">EPS Surpr</th>
+          <th data-col="forward_pe" class="sec th-tip" data-tip="Next-twelve-month P/E ratio. High values are tolerated for high-growth stocks — use PEG for growth-adjusted view.">Fwd P/E</th>
+          <th data-col="peg_ratio" class="th-tip" data-tip="Price/Earnings-to-Growth. Adjusts P/E for expected growth rate. &lt;1 = cheap vs growth, 1–2.5 = fair, &gt;3.5 = expensive. Highest-weight valuation metric (7.5% of score).">PEG</th>
+          <th data-col="ev_ebitda" class="th-tip" data-tip="Enterprise Value / EBITDA. Accounts for debt; useful for capital-intensive companies. Lower = cheaper.">EV/EBITDA</th>
+          <th data-col="price_sales" class="th-tip" data-tip="Price / trailing-twelve-month sales. Useful for pre-profit or low-margin companies where P/E is not meaningful.">P/S</th>
+          <th data-col="gross_margin" class="sec th-tip" data-tip="Gross profit as % of revenue. Reflects pricing power and cost structure. Note: highly sector-dependent.">Gross Mgn</th>
+          <th data-col="operating_margin" class="th-tip" data-tip="Operating income as % of revenue. Best cross-sector profitability signal — most heavily weighted quality metric (9.8% of score).">Op Mgn</th>
+          <th data-col="roe" class="th-tip" data-tip="Return on Equity: net income / shareholders equity. Measures how efficiently management generates profit from equity. (7% of score)">ROE</th>
+          <th data-col="roa" class="th-tip" data-tip="Return on Assets: net income / total assets. Measures overall asset efficiency.">ROA</th>
+          <th data-col="debt_equity" class="th-tip" data-tip="Total debt / total equity. Lower = stronger balance sheet. Excluded for Financials and Utilities where leverage is structural.">D/E</th>
+          <th data-col="analyst_upside" class="sec th-tip" data-tip="Consensus analyst price target upside from current price (%).">Analyst ↑</th>
+          <th data-col="analyst_rec_label" class="th-tip" data-tip="Analyst consensus recommendation (Strong Buy → Sell) based on mean recommendation score.">Consensus</th>
+          <th data-col="target_price" class="th-tip" data-tip="Mean analyst 12-month price target.">Target</th>
+          <th data-col="next_earnings" class="th-tip" data-tip="Next scheduled earnings announcement date.">Earnings</th>
+        </tr>
+      </thead>
       <tbody id="tbl-body"><tr><td colspan="26" class="empty"><span>⟳</span>Loading…</td></tr></tbody>
     </table>
   </div>
@@ -249,7 +280,7 @@ def build_html(data, portfolio):
 <div class="page" id="page-performance">
   <div style="margin-top:24px;margin-bottom:22px">
     <div class="section-title">Performance Tracker</div>
-    <div class="section-sub">// Simulated portfolio · Buys A &amp; B grades (≥75) · Sells at C (&lt;68) · Started <span id="port-start-date">—</span></div>
+    <div class="section-sub">Simulated portfolio · Buys A &amp; B grades (≥65) · Sells at C (&lt;52) · Started <span id="port-start-date">—</span></div>
   </div>
 
   <!-- KPI Cards -->
@@ -281,11 +312,11 @@ def build_html(data, portfolio):
     <div class="chart-title">Portfolio vs S&P 500</div>
     <div class="chart-legend">
       <div class="chart-legend-item">
-        <div class="chart-legend-dot" style="background:#4fc3f7"></div>
+        <div class="chart-legend-dot" style="background:#1a1a1a"></div>
         <span>Portfolio</span>
       </div>
       <div class="chart-legend-item">
-        <div class="chart-legend-dot" style="background:#f59e0b"></div>
+        <div class="chart-legend-dot" style="background:#c41e3a"></div>
         <span>S&P 500 (SPY)</span>
       </div>
     </div>
@@ -374,12 +405,12 @@ function fmtPct(v, plus=true) {{
   return (plus && v > 0 ? '+' : '') + v.toFixed(2) + '%';
 }}
 function scoreBarColor(a) {{
-  if (a == null) return '#2d3340';
-  if (a>=90) return '#22c55e';
-  if (a>=80) return '#84cc16';
-  if (a>=70) return '#f59e0b';
-  if (a>=60) return '#f97316';
-  return '#ef4444';
+  if (a == null) return '#ccc8c0';
+  if (a>=78) return '#1a1a1a';
+  if (a>=65) return '#3d3d3d';
+  if (a>=52) return '#c41e3a';
+  if (a>=38) return '#e8794a';
+  return '#aaaaaa';
 }}
 function scoreBar(avg) {{
   if (avg == null) return `<td class="neutral">—</td>`;
@@ -568,8 +599,8 @@ function renderPerformance() {{
         {{
           label: 'Portfolio',
           data: portVals,
-          borderColor: '#4fc3f7',
-          backgroundColor: 'rgba(79,195,247,0.08)',
+          borderColor: '#1a1a1a',
+          backgroundColor: 'rgba(26,26,26,0.05)',
           borderWidth: 2,
           pointRadius: allDates.length > 60 ? 0 : 3,
           pointHoverRadius: 5,
@@ -580,8 +611,8 @@ function renderPerformance() {{
         {{
           label: 'S&P 500',
           data: spyVals,
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245,158,11,0.05)',
+          borderColor: '#c41e3a',
+          backgroundColor: 'rgba(196,30,58,0.04)',
           borderWidth: 2,
           pointRadius: allDates.length > 60 ? 0 : 3,
           pointHoverRadius: 5,
@@ -598,13 +629,13 @@ function renderPerformance() {{
       plugins: {{
         legend: {{ display:false }},
         tooltip: {{
-          backgroundColor: '#181c24',
-          borderColor: '#2d3340',
+          backgroundColor: '#ffffff',
+          borderColor: '#1a1a1a',
           borderWidth: 1,
-          titleColor: '#dde3ee',
-          bodyColor: '#8a93a8',
-          titleFont: {{ family:"'Space Mono',monospace", size:11 }},
-          bodyFont:  {{ family:"'Space Mono',monospace", size:11 }},
+          titleColor: '#1a1a1a',
+          bodyColor: '#555550',
+          titleFont: {{ family:"'IBM Plex Mono',monospace", size:11 }},
+          bodyFont:  {{ family:"'IBM Plex Mono',monospace", size:11 }},
           callbacks: {{
             label: ctx => `${{ctx.dataset.label}}: ${{ctx.parsed.y!=null?fmtPct(ctx.parsed.y):'—'}}`
           }}
@@ -612,15 +643,15 @@ function renderPerformance() {{
       }},
       scales: {{
         x: {{
-          grid: {{ color:'rgba(34,39,48,0.8)' }},
-          ticks: {{ color:'#5a6478', font:{{family:"'Space Mono',monospace",size:10}},
+          grid: {{ color:'rgba(224,220,212,0.8)' }},
+          ticks: {{ color:'#888880', font:{{family:"'IBM Plex Mono',monospace",size:10}},
                    maxTicksLimit:12, maxRotation:0 }}
         }},
         y: {{
-          grid: {{ color:'rgba(34,39,48,0.8)' }},
+          grid: {{ color:'rgba(224,220,212,0.8)' }},
           ticks: {{
-            color:'#5a6478',
-            font:{{family:"'Space Mono',monospace",size:10}},
+            color:'#888880',
+            font:{{family:"'IBM Plex Mono',monospace",size:10}},
             callback: v => (v>=0?'+':'')+v.toFixed(1)+'%'
           }}
         }}
