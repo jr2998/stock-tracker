@@ -185,7 +185,13 @@ def fetch_ticker_data(symbol, require_min_cap=True):
             # ── Valuation ─────────────────────────────────────────────────
             forward_pe  = safe(info.get("forwardPE"))
             peg_ratio   = safe(info.get("pegRatio"))
-            ev_ebitda   = safe(info.get("enterpriseToEbitda"))
+            _ev_ebitda_raw = safe(info.get("enterpriseToEbitda"))
+            # Negative EV/EBITDA means negative EBITDA — not a useful valuation
+            # signal.  Store None so the table shows '-' rather than a confusing
+            # negative number.
+            ev_ebitda = (_ev_ebitda_raw
+                         if (_ev_ebitda_raw is not None and _ev_ebitda_raw > 0)
+                         else None)
             price_sales = safe(info.get("priceToSalesTrailing12Months"))
 
             # ── Analyst rec label ──────────────────────────────────────────
@@ -204,9 +210,104 @@ def fetch_ticker_data(symbol, require_min_cap=True):
             profit_margin    = safe_pct(info.get("profitMargins"))
             roe              = safe_pct(info.get("returnOnEquity"))
             roa              = safe_pct(info.get("returnOnAssets"))
-            debt_equity      = safe(info.get("debtToEquity"))
+
+            # Sanity-check ROE: yfinance returns extreme values (e.g. ±1500%)
+            # for companies with near-zero or negative equity (SBUX, WYNN, LOW,
+            # SBAC).  Beyond ±500% the number is a capital-structure artefact,
+            # not a useful profitability signal.
+            if roe is not None and abs(roe) > 500:
+                roe = None
+
+            # Balance-sheet fallback: when info-level ROE is missing (Yahoo
+            # suppresses it for negative-equity companies), calculate directly
+            # from TTM net income and most-recent equity.
+            if roe is None:
+                try:
+                    _bs = tk.quarterly_balance_sheet
+                    _qi = tk.quarterly_income_stmt
+                    if (_bs is not None and not _bs.empty
+                            and _qi is not None and not _qi.empty):
+                        _bs = _bs.sort_index(axis=1, ascending=False)
+                        _qi = _qi.sort_index(axis=1, ascending=False)
+                        # TTM net income
+                        _ni_row = None
+                        for _n in ["Net Income", "Net Income Common Stockholders",
+                                   "Net Income Applicable To Common Shares"]:
+                            if _n in _qi.index:
+                                _ni_row = _qi.loc[_n]
+                                break
+                        _ttm_ni = None
+                        if _ni_row is not None and _qi.shape[1] >= 4:
+                            _sl = _ni_row.iloc[:4].astype(float)
+                            if not _sl.isna().all():
+                                _ttm_ni = float(_sl.sum())
+                        # Most-recent equity
+                        _eq = None
+                        for _en in ["Stockholders Equity", "Common Stock Equity",
+                                    "Total Equity Gross Minority Interest"]:
+                            if _en in _bs.index:
+                                try:
+                                    _v = float(_bs.loc[_en].iloc[0])
+                                    if _v == _v:    # not NaN
+                                        _eq = _v
+                                        break
+                                except Exception:
+                                    pass
+                        if _ttm_ni is not None and _eq is not None and _eq != 0:
+                            _roe = round(_ttm_ni / abs(_eq) * 100, 2)
+                            if _eq < 0:
+                                _roe = -abs(_roe)   # negative equity → negative ROE
+                            if abs(_roe) <= 500:
+                                roe = _roe
+                except Exception:
+                    pass
+
+            # ── D/E ratio ─────────────────────────────────────────────────────
+            # yfinance debtToEquity is expressed as a percentage (e.g. 180 = 1.8×).
+            # Yahoo suppresses it when equity is negative, and returns garbage for
+            # near-zero equity.  We normalise to a ratio (/100) then validate.
+            debt_equity = safe(info.get("debtToEquity"))
             if debt_equity is not None:
                 debt_equity = round(debt_equity / 100, 3)
+                # Negative ratio = negative equity; >30× is a data artefact.
+                if debt_equity < 0 or debt_equity > 30:
+                    debt_equity = None
+
+            # Balance-sheet fallback: total debt / |equity|.
+            if debt_equity is None:
+                try:
+                    _bs2 = tk.quarterly_balance_sheet
+                    if _bs2 is not None and not _bs2.empty:
+                        _bs2 = _bs2.sort_index(axis=1, ascending=False)
+                        _debt = None
+                        for _dn in ["Total Debt",
+                                    "Long Term Debt And Capital Lease Obligation",
+                                    "Long Term Debt"]:
+                            if _dn in _bs2.index:
+                                try:
+                                    _v = float(_bs2.loc[_dn].iloc[0])
+                                    if _v == _v and _v >= 0:
+                                        _debt = _v
+                                        break
+                                except Exception:
+                                    pass
+                        _eq2 = None
+                        for _en2 in ["Stockholders Equity", "Common Stock Equity",
+                                     "Total Equity Gross Minority Interest"]:
+                            if _en2 in _bs2.index:
+                                try:
+                                    _v = float(_bs2.loc[_en2].iloc[0])
+                                    if _v == _v:
+                                        _eq2 = _v
+                                        break
+                                except Exception:
+                                    pass
+                        if _debt is not None and _eq2 is not None and _eq2 != 0:
+                            _de = round(_debt / abs(_eq2), 3)
+                            if _de <= 30:   # cap; beyond 30× the ratio loses meaning
+                                debt_equity = _de
+                except Exception:
+                    pass
 
             # ── Growth fallbacks from info ─────────────────────────────────
             # yfinance info.revenueGrowth/earningsGrowth = single-quarter YoY.
@@ -436,12 +537,35 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                 eps_growth_ttm = eps_growth_info
 
 
-            # ── PEG: manual fallback if yfinance pegRatio is None ─────────
-            # PEG = Forward P/E  /  expected EPS growth rate (as %)
-            if peg_ratio is None and forward_pe is not None and eps_growth_ttm is not None:
-                growth_rate = eps_growth_ttm   # already a percentage, e.g. 25.0
+            # ── PEG: three-source cascade ─────────────────────────────────
+            # Source 1: pegRatio (direct from info, fetched above)
+            #
+            # Source 2: trailingPegRatio — Yahoo provides this for many tickers
+            #   (especially REITs and thinly-covered companies) where the forward
+            #   pegRatio is absent.  Only use when positive.
+            if peg_ratio is None:
+                peg_ratio = safe(info.get("trailingPegRatio"))
+                if peg_ratio is not None and peg_ratio <= 0:
+                    peg_ratio = None
+
+            # Source 3: Forward P/E / EPS growth rate (manual calculation).
+            # Uses the TTM eps_growth_ttm (preferred — our own calculation).
+            # Falls back to info-level earningsGrowth when eps_growth_ttm is
+            # unavailable (e.g. newly-named tickers, cyclicals with <8 quarters).
+            # Note: we bypass the ±0.15% sentinel used for the display field —
+            # any positive growth rate is a valid PEG denominator.
+            if peg_ratio is None and forward_pe is not None:
+                growth_rate = eps_growth_ttm
+                if growth_rate is None:
+                    _eg_raw = safe(info.get("earningsGrowth"))
+                    if _eg_raw is not None and _eg_raw > 0.005:   # > 0.5% floor
+                        growth_rate = round(_eg_raw * 100, 2)
                 if growth_rate and growth_rate > 0:
                     peg_ratio = round(forward_pe / growth_rate, 3)
+
+            # Sanity clamp: PEG outside (0, 99] is a data artefact
+            if peg_ratio is not None and (peg_ratio <= 0 or peg_ratio > 99):
+                peg_ratio = None
 
             # ── Earnings surprise ──────────────────────────────────────────
             # yfinance earnings_dates column names vary by version:
