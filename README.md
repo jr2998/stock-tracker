@@ -1,100 +1,149 @@
-# Stock Grader v2
+# Stock Grader
 
-A self-updating stock dashboard that grades large-cap US companies (>$20B market cap) across growth, valuation, profitability, and momentum metrics using free data from Yahoo Finance.
+A fully automated S&P 500 stock screener that scores every company in the index on growth, quality, valuation, and momentum — then simulates a portfolio that buys the best-graded stocks and tracks its performance against the S&P 500. Runs on GitHub Actions and publishes to GitHub Pages.
 
-## Setup
+---
 
-```bash
-git clone https://github.com/YOUR-USERNAME/YOUR-REPO.git
-cd YOUR-REPO
-pip install -r requirements.txt
+## What it does
 
-# Fetch data and generate the site
-python scraper.py        # ~30–45 min for full universe
-python generate_html.py  # instant
+Every week, the pipeline scrapes fundamentals for ~530 tickers (S&P 500 + a curated large-cap watchlist) from Yahoo Finance, runs each one through a scoring model, assigns a letter grade A–F, and publishes an interactive website. Every weekday, a lightweight price update refreshes the simulated portfolio without re-scraping.
+
+The website has two pages:
+
+- **Stock Data** — a sortable, filterable table of every stock with 26 columns spanning growth, valuation, quality, and momentum metrics
+- **Performance Tracker** — a chart and holdings breakdown for the simulated portfolio, benchmarked against SPY
+
+---
+
+## Pipeline
+
+```
+Weekly (Sunday 11 PM ET)        Daily (Mon–Fri 9 PM ET)
+─────────────────────────       ───────────────────────
+scraper.py                      price_updater.py
+   ↓ raw_data.json                  ↓ portfolio.json (prices only)
+grader.py                       generate_html.py
+   ↓ data.json                      ↓ index.html
+   ↓ portfolio.json
+generate_html.py
+   ↓ index.html
 ```
 
-Open `index.html` in a browser locally, or push to GitHub Pages.
+| Script | Role | Runtime |
+|---|---|---|
+| `scraper.py` | Fetches fundamentals for every ticker via yfinance | ~45–60 min |
+| `grader.py` | Scores and grades each stock; manages portfolio | ~5 seconds |
+| `price_updater.py` | Refreshes held-position prices only | ~15 seconds |
+| `generate_html.py` | Renders `index.html` from `data.json` + `portfolio.json` | ~1 second |
 
-## GitHub Pages Setup
-
-1. Push this repo to GitHub
-2. Go to **Settings → Pages → Source** → set to `main` branch, `/ (root)` folder
-3. Enable the Actions workflow under **Actions → Update Stock Data → Enable**
-4. Run it manually the first time via **Run workflow**
-5. Your site will be at `https://YOUR-USERNAME.github.io/YOUR-REPO/`
-
-The workflow runs automatically every Monday at midnight UTC. Change the cron schedule in `.github/workflows/update.yml` as desired.
+The grader is intentionally decoupled from the scraper. To adjust the scoring model without re-scraping, edit `grader.py` and run it directly — it reads the existing `raw_data.json` and produces a new `data.json` in seconds.
 
 ---
 
-## Grading System
+## Grading model
 
-Each stock receives an **A–F grade** based on a weighted composite score (0–4 scale).
+Each stock receives a composite score from 0–100, then a letter grade based on that score. The model is tuned to surface **strong growth stocks with solid fundamentals** — it rewards accelerating earnings more than cheap valuation.
 
-| Grade | Score | Meaning |
-|-------|-------|---------|
-| A | 3.3–4.0 | Exceptional across the board |
-| B | 2.6–3.2 | Good, with minor weaknesses |
-| C | 1.9–2.5 | Average — not compelling either way |
-| D | 1.2–1.8 | Multiple concerning signals |
-| F | < 1.2 | Failing on most dimensions |
+### Grade thresholds
 
-### Category Weights
+| Grade | Score | Interpretation |
+|---|---|---|
+| **A** | ≥ 78 | Exceptional — top ~15% of the universe |
+| **B** | 65–77 | Good — above-average growth and quality |
+| **C** | 52–64 | Average — mediocre but not broken |
+| **D** | 38–51 | Weak — meaningful problems in at least one area |
+| **F** | < 38 | Poor — declining fundamentals or badly overvalued |
 
-| Category | Weight | Rationale |
-|----------|--------|-----------|
-| Growth | 35% | Core question for large caps: is the business still expanding? |
-| Valuation | 25% | Even great companies are bad investments at the wrong price |
-| Profitability | 25% | Ensures growth isn't destroying value |
-| Momentum/Sentiment | 15% | Real signal but noisy — given least weight |
+### Category weights
+
+| Category | Weight | What it captures |
+|---|---|---|
+| **Growth** | 45% | Revenue and EPS trajectory, acceleration, and earnings beats |
+| **Quality** | 30% | Margin structure, return on capital, balance sheet strength |
+| **Valuation** | 15% | How much you're paying relative to growth and earnings power |
+| **Momentum** | 10% | Price trend and analyst forward expectations |
+
+### Metrics and effective weights
+
+Every raw metric is mapped to a 0–100 score via interpolated anchor tables, calibrated so that a median S&P 500 result scores approximately 50. Scores above 80 require top-decile results.
+
+**Growth (45% of overall)**
+
+| Metric | Sub-weight | Effective weight | Notes |
+|---|---|---|---|
+| EPS Growth TTM | 36% | **16.2%** | Trailing-twelve-month EPS growth YoY. Weighted above revenue growth because EPS leverage (growing earnings faster than revenue) is the hallmark of quality compounders. |
+| Rev Growth TTM | 28% | **12.6%** | Trailing-twelve-month revenue growth YoY. |
+| EPS Acceleration | 16% | **7.2%** | Change in EPS YoY growth rate vs the prior quarter (percentage points). Positive = margins are expanding. |
+| Rev Acceleration | 12% | **5.4%** | Change in revenue YoY growth rate vs the prior quarter (pp). |
+| Earnings Surprise | 8% | **3.6%** | Most recent quarter EPS beat vs analyst consensus. |
+
+**Quality (30% of overall)**
+
+| Metric | Sub-weight | Effective weight | Notes |
+|---|---|---|---|
+| Operating Margin | 30% | **9.0%** | Best cross-sector profitability signal — captures R&D and SG&A efficiency, not just pricing power. |
+| ROE | 28% | **8.4%** | Return on Equity. The single best measure of whether a business earns exceptional returns on capital. |
+| Gross Margin | 18% | **5.4%** | Reflects pricing power and cost structure. Sector-dependent — used as a secondary signal rather than primary. |
+| ROA | 14% | **4.2%** | Return on Assets. Particularly informative for asset-light businesses. |
+| Debt/Equity | 10% | **3.0%** | Balance sheet risk penalty. Excluded for Financials and Utilities, where leverage is structural. |
+
+**Valuation (15% of overall)**
+
+| Metric | Sub-weight | Effective weight | Notes |
+|---|---|---|---|
+| PEG Ratio | 42% | **6.3%** | Price/Earnings-to-Growth. Adjusts P/E for expected growth rate — the best single valuation signal for a growth-focused screener. &lt;1 = cheap vs growth; &gt;3.5 = expensive. |
+| EV/EBITDA | 28% | **4.2%** | Enterprise Value / EBITDA. Works across capital structures; preferred over raw P/E for capital-intensive companies. |
+| Forward P/E | 20% | **3.0%** | Next-twelve-month P/E. Intentionally tolerant of high multiples on high-growth stocks. |
+| Price/Sales | 10% | **1.5%** | Weakest signal for large profitable companies; retained as a tiebreaker for revenue-stage businesses. |
+
+**Momentum (10% of overall)**
+
+| Metric | Sub-weight | Effective weight | Notes |
+|---|---|---|---|
+| Analyst Upside | 42% | **4.2%** | Consensus price target upside from current price. Forward-looking — analysts are pricing in the next 12 months. |
+| 52W Performance | 38% | **3.8%** | Trailing 52-week price return. Trend confirmation signal. |
+| Analyst Rec | 20% | **2.0%** | Consensus recommendation (Strong Buy → Sell). Useful as a directional signal but trimmed because analyst downgrades tend to lag reality. |
+
+### Sector adjustments
+
+Debt/Equity is excluded from scoring for **Financials** and **Utilities** — leverage is a core part of their business model, not a risk signal.
 
 ---
 
-## Metrics
+## Simulated portfolio
 
-### Growth (35% of grade)
+The portfolio starts with $1,000,000 in cash and follows simple rules:
 
-| Metric | Source | What it measures |
-|--------|--------|-----------------|
-| **Rev Growth TTM** | Quarterly income stmt | Revenue YoY growth, trailing twelve months. The most fundamental measure of whether a business is expanding. |
-| **EPS Growth TTM** | Quarterly income stmt | Earnings-per-share YoY growth, TTM. Growing revenue that doesn't translate to growing EPS is a red flag. |
-| **Rev Acceleration** | Quarterly income stmt | Current quarter revenue YoY minus prior quarter YoY. Positive = business is speeding up. One of the strongest bullish signals. |
-| **EPS Acceleration** | Quarterly income stmt | Same for EPS. Acceleration in both revenue and EPS simultaneously is the core CANSLIM signal. |
-| **EPS Surprise** | yfinance earnings_dates | How much actual EPS beat/missed analyst estimates last quarter. Consistent beaters tend to keep beating. |
+- **Buy** stocks graded A or B (score ≥ 65), weighting allocations based on grade
+- **Sell** any holding whose grade drops to C (score < 52), recycling proceeds back to cash
+- **Benchmark** tracks SPY normalised to the same $1M start
 
-### Valuation (25% of grade)
-
-| Metric | Source | What it measures |
-|--------|--------|-----------------|
-| **Forward P/E** | yfinance info | Price / next-twelve-months estimated earnings. Lower = cheaper, but must be read relative to growth rate. |
-| **PEG Ratio** | yfinance info | Forward P/E ÷ EPS growth rate. The single most useful valuation metric for growth stocks — normalizes price for growth. <1 = undervalued, >2 = expensive. |
-| **EV/EBITDA** | yfinance info | Enterprise Value / EBITDA. Better than P/E for comparing companies with different capital structures. <10 = cheap, >30 = expensive. |
-| **Price/Sales** | yfinance info | Useful for low/negative earnings companies; harder to manipulate than earnings-based metrics. |
-
-### Profitability (25% of grade)
-
-| Metric | Source | What it measures |
-|--------|--------|-----------------|
-| **Gross Margin** | yfinance info | Revenue minus COGS as % of revenue. High margins (>50%) indicate pricing power and defensible business model. Sticky once established. |
-| **Operating Margin** | yfinance info | Operating earnings as % of revenue. Measures management efficiency. Expanding margins over time = strong quality signal. |
-| **ROE** | yfinance info | Net income / shareholder equity. How efficiently the company uses capital. >15% solid, >25% excellent. |
-| **ROA** | yfinance info | Net income / total assets. Cleaner than ROE — not distorted by leverage. >10% = strong. |
-| **Debt/Equity** | yfinance info | Total debt / equity. High debt amplifies risk. Not scored for banks/utilities (structural leverage). |
-
-### Momentum & Sentiment (15% of grade)
-
-| Metric | Source | What it measures |
-|--------|--------|-----------------|
-| **52W Performance** | yfinance history | 1-year price return. Price momentum is one of the most documented factors in academic finance. |
-| **Analyst Upside** | yfinance info | % gap between current price and consensus analyst price target. |
-| **Analyst Rec** | yfinance info | Consensus analyst rating (1=Strong Buy → 5=Sell). Converted to 0–4 score. |
+Portfolio rebalancing happens weekly during the full scrape. Daily price updates keep holding valuations current between scrapes without triggering any trades. The Performance Tracker page shows the portfolio value over time, current holdings with cost basis and gain/loss, and a full trade history.
 
 ---
 
-## Notes
+## Website features
 
-- **Sector adjustments**: Financials and Utilities are excluded from the Debt/Equity score (structural leverage is normal). REITs skip Forward P/E (P/FFO is the correct metric but not available in yfinance).
-- **Missing data**: Many metrics are absent for some tickers. The grade is computed from available metrics only — a stock with fewer data points gets a grade based on what's available.
-- **Use within sectors**: The grade is most meaningful when comparing companies in the same sector. A utility will almost always score lower on growth than a software company — sector context matters.
-- **Not financial advice**: This tool is for research and learning only.
+### Stock Data page
+
+- **26 columns** across four column groups: Info, Growth, Valuation, Quality, Momentum
+- **Column tooltips** — hover any column header for a description of the metric and its weight in the model
+- **Sort** by any column (click header to toggle ascending/descending)
+- **Filter by grade** — one-click buttons to show only A, B, C, D, or F stocks
+- **Filter by sector** — dropdown covering all 11 GICS sectors
+- **Search** by ticker or company name
+- **Score bar** — every stock shows a mini progress bar coloured by grade alongside its numeric score
+- Sticky first two columns (Ticker, Name) so they stay visible when scrolling right
+
+### Performance Tracker page
+
+- **KPI cards** — current portfolio value, total return %, number of holdings, and trade count
+- **Return chart** — portfolio vs S&P 500 (SPY) as % return from inception, with hover tooltips
+- **Holdings table** — all current positions with shares, cost basis, current price, market value, gain/loss, and portfolio weight
+- **Trade history** — full log of every buy and sell with date, price, and realised gain %
+
+---
+
+## Data source and disclaimer
+
+All data is sourced from Yahoo Finance via [yfinance](https://github.com/ranaroussi/yfinance). Data may be delayed, incomplete, or incorrect. This project is for informational and educational purposes only. **Not financial advice.**
