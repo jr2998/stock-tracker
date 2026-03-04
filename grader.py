@@ -21,8 +21,9 @@ OUTPUT_FILE    = "data.json"
 PORTFOLIO_FILE = "portfolio.json"
 
 # Portfolio buy/sell thresholds — keep in sync with grade boundaries
-BUY_THRESHOLD  = 65.0   # buy A and B rated stocks (overall >= 65)
-SELL_THRESHOLD = 52.0   # sell when grade drops to C (overall < 52)
+BUY_THRESHOLD    = 65.0   # buy A and B rated stocks (overall >= 65)
+SELL_THRESHOLD   = 52.0   # sell when grade drops to C (overall < 52)
+RESET_PORTFOLIO  = True   # set to False after first run to preserve history
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SCORING MODEL
@@ -43,10 +44,10 @@ SELL_THRESHOLD = 52.0   # sell when grade drops to C (overall < 52)
 #   F  < 38   Bottom ~20%: declining, poor quality, or badly overvalued
 #
 # CATEGORY WEIGHTS  (growth-focused model)
-#   Growth    45%  — revenue & EPS growth rate + acceleration + earnings beat
-#   Quality   30%  — margins, returns on capital, balance sheet
-#   Valuation 15%  — PEG-anchored; growth premiums are acceptable
-#   Momentum  10%  — price action + analyst sentiment
+#   Growth    50%  — accel weighted more heavily; markets price in future growth
+#   Quality   28%  — op margin + ROE dominate; gross margin reduced (sector-biased)
+#   Valuation 15%  — PEG now 50% within category; EV/EBITDA + P/S trimmed
+#   Momentum   7%  — reduced; analyst signals are noisy/lagging
 
 FINANCIALS_SECTORS = {"Financial Services", "Financials"}
 UTILITIES_SECTORS  = {"Utilities"}
@@ -169,11 +170,11 @@ def score_record(raw):
     s["eps_accel"]         = _interp(raw.get("eps_accel"),         A_EPS_ACCEL)
     s["earnings_surprise"] = _interp(raw.get("earnings_surprise"), A_SURPRISE)
     s["growth"] = _wavg([
-        (s["rev_growth_ttm"],    0.32),
-        (s["eps_growth_ttm"],    0.32),
-        (s["rev_accel"],         0.14),
-        (s["eps_accel"],         0.14),
-        (s["earnings_surprise"], 0.08),
+        (s["eps_growth_ttm"],    0.36),   # EPS growth leads — operating leverage matters
+        (s["rev_growth_ttm"],    0.28),   # revenue growth still core signal
+        (s["eps_accel"],         0.16),   # EPS acceleration: are margins expanding?
+        (s["rev_accel"],         0.12),   # revenue acceleration
+        (s["earnings_surprise"], 0.08),   # beaten-and-raised catalyst
     ])
 
     # ── Quality (30%) ─────────────────────────────────────────────────────
@@ -183,11 +184,11 @@ def score_record(raw):
     s["roa"]              = _interp(raw.get("roa"),              A_ROA)
     s["debt_equity"]      = None if (is_fin or is_util) else                             _interp(raw.get("debt_equity"),      A_DE_INV)
     s["quality"] = _wavg([
-        (s["gross_margin"],     0.28),
-        (s["operating_margin"], 0.30),
-        (s["roe"],              0.20),
-        (s["roa"],              0.12),
-        (s["debt_equity"],      0.10),
+        (s["operating_margin"], 0.30),   # best cross-sector profitability signal
+        (s["roe"],              0.28),   # best capital efficiency — separates great from good
+        (s["gross_margin"],     0.18),   # pricing power signal; reduced (correlated w/ op margin)
+        (s["roa"],              0.14),   # asset efficiency; boosted (esp. for asset-light cos)
+        (s["debt_equity"],      0.10),   # balance sheet risk penalty
     ])
 
     # ── Valuation (15%) ───────────────────────────────────────────────────
@@ -196,10 +197,10 @@ def score_record(raw):
     s["ev_ebitda"]   = _interp(raw.get("ev_ebitda"),   A_EV_INV)
     s["price_sales"] = _interp(raw.get("price_sales"), A_PS_INV)
     s["valuation"] = _wavg([
-        (s["peg_ratio"],   0.40),
-        (s["forward_pe"],  0.25),
-        (s["ev_ebitda"],   0.20),
-        (s["price_sales"], 0.15),
+        (s["peg_ratio"],   0.42),   # best growth-adjusted metric
+        (s["ev_ebitda"],   0.28),   # universal: works across capital structures
+        (s["forward_pe"],  0.20),   # trimmed: largely captured by PEG
+        (s["price_sales"], 0.10),   # weakest for large profitable cos; kept as tiebreaker
     ])
 
     # ── Momentum (10%) ────────────────────────────────────────────────────
@@ -207,9 +208,9 @@ def score_record(raw):
     s["analyst_upside"] = _interp(raw.get("analyst_upside"), A_UPSIDE)
     s["analyst_rec"]    = _interp(raw.get("analyst_rec"),    A_REC_INV)
     s["momentum"] = _wavg([
-        (s["perf_52w"],       0.38),
-        (s["analyst_upside"], 0.35),
-        (s["analyst_rec"],    0.27),
+        (s["analyst_upside"], 0.42),   # forward-looking; analysts price in next 12m
+        (s["perf_52w"],       0.38),   # trend confirmation
+        (s["analyst_rec"],    0.20),   # lagging but directionally useful
     ])
 
     # ── Overall ───────────────────────────────────────────────────────────
@@ -500,7 +501,9 @@ def main():
     # Re-run portfolio with updated grades
     print("\n── Portfolio update ──────────────────────────────────────────────")
     portfolio = load_portfolio()
-    if portfolio is None:
+    if portfolio is None or RESET_PORTFOLIO:
+        if RESET_PORTFOLIO and portfolio is not None:
+            print("  Resetting portfolio (RESET_PORTFOLIO=True)")
         portfolio = _init_portfolio(records)
     else:
         portfolio = _refresh_spy(portfolio)
