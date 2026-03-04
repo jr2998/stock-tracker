@@ -340,9 +340,12 @@ def build_html(data, portfolio):
         <th data-col="gain_pct">Gain %</th>
         <th data-col="gain_usd">Gain $</th>
         <th data-col="weight">Weight</th>
+        <th data-col="target">Target</th>
+        <th data-col="drift">Drift</th>
+        <th data-col="days_held">Days</th>
         <th data-col="bought_date">Bought</th>
       </tr></thead>
-      <tbody id="holdings-body"><tr><td colspan="13" class="empty"><span>—</span>No holdings yet</td></tr></tbody>
+      <tbody id="holdings-body"><tr><td colspan="16" class="empty"><span>—</span>No holdings yet</td></tr></tbody>
     </table>
   </div>
 
@@ -661,6 +664,23 @@ function renderPerformance() {{
 
   // ── Holdings table ─────────────────────────────────────────────────────
   const stockMap = Object.fromEntries(STOCKS.map(s=>[s.ticker,s]));
+
+  // Mirror grader.py _target_weights() so the table shows live targets
+  function computeTargetWeights(stocks) {{
+    const CONV = 1.5, MAX_P = 0.10, MIN_P = 0.015;
+    const elig = stocks.filter(s => (s.overall||0) >= 65 && s.price_raw > 0);
+    if (!elig.length) return {{}};
+    const raw = {{}};
+    elig.forEach(s => {{ raw[s.ticker] = Math.pow(s.overall, CONV); }});
+    const tot = Object.values(raw).reduce((a,b)=>a+b,0) || 1;
+    const w = {{}};
+    for (const [t,v] of Object.entries(raw)) w[t] = Math.max(MIN_P, Math.min(MAX_P, v/tot));
+    const totW = Object.values(w).reduce((a,b)=>a+b,0) || 1;
+    for (const t in w) w[t] /= totW;
+    return w;
+  }}
+  const targetW = computeTargetWeights(STOCKS);
+
   const holdArr  = Object.entries(holdings).map(([ticker,pos]) => {{
     const st       = stockMap[ticker] || {{}};
     const curPrice = pos.last_price || pos.cost_basis;
@@ -668,28 +688,42 @@ function renderPerformance() {{
     const gainUsd  = pos.shares * (curPrice - pos.cost_basis);
     const gainPct  = (curPrice - pos.cost_basis) / pos.cost_basis * 100;
     const weight   = curVal > 0 ? mv / curVal * 100 : 0;
-    return {{ ticker, pos, st, curPrice, mv, gainUsd, gainPct, weight }};
+    const target   = targetW[ticker] != null ? targetW[ticker] * 100 : null;
+    const drift    = target != null ? weight - target : null;
+    const daysHeld = pos.bought_date
+      ? Math.floor((Date.now() - new Date(pos.bought_date)) / 86400000) : null;
+    return {{ ticker, pos, st, curPrice, mv, gainUsd, gainPct, weight, target, drift, daysHeld }};
   }}).sort((a,b) => b.mv - a.mv);
 
   const hbody = document.getElementById('holdings-body');
   if (!holdArr.length) {{
-    hbody.innerHTML = `<tr><td colspan="13" class="empty"><span>—</span>No current holdings</td></tr>`;
+    hbody.innerHTML = `<tr><td colspan="16" class="empty"><span>—</span>No current holdings</td></tr>`;
   }} else {{
-    hbody.innerHTML = holdArr.map(h => `<tr>
-      <td class="c-ticker">${{h.ticker}}</td>
-      <td class="c-name" title="${{h.st.name||''}}">${{h.st.name||'—'}}</td>
-      <td><span class="spill">${{h.st.sector||'—'}}</span></td>
-      <td class="sec"><span class="gb ${{h.st.grade_color||''}}">${{h.st.grade||'—'}}</span></td>
-      ${{scoreBar(h.st.overall)}}
-      <td class="sec">${{h.pos.shares.toFixed(4)}}</td>
-      <td>${{h.pos.cost_basis.toFixed(2)}}</td>
-      <td>${{h.curPrice.toFixed(2)}}</td>
-      <td>${{fmtUsd(h.mv)}}</td>
-      <td class="${{h.gainPct>=0?'pos':'neg'}}">${{fmtPct(h.gainPct)}}</td>
-      <td class="${{h.gainUsd>=0?'pos':'neg'}}">${{fmtUsd(h.gainUsd)}}</td>
-      <td>${{h.weight.toFixed(1)}}%</td>
-      <td>${{h.pos.bought_date||'—'}}</td>
-    </tr>`).join('');
+    hbody.innerHTML = holdArr.map(h => {{
+      const driftCls = h.drift == null ? '' : h.drift > 3 ? 'neg' : h.drift < -3 ? 'pos' : 'neutral';
+      const driftStr = h.drift != null ? (h.drift>=0?'+':'')+h.drift.toFixed(1)+'pp' : '—';
+      const targetStr = h.target != null ? h.target.toFixed(1)+'%' : '—';
+      const daysStr  = h.daysHeld != null ? h.daysHeld+'d' : '—';
+      const daysCls  = h.daysHeld != null && h.daysHeld < 365 ? 'neutral' : '';
+      return `<tr>
+        <td class="c-ticker">${{h.ticker}}</td>
+        <td class="c-name" title="${{h.st.name||''}}">${{h.st.name||'—'}}</td>
+        <td><span class="spill">${{h.st.sector||'—'}}</span></td>
+        <td class="sec"><span class="gb ${{h.st.grade_color||''}}">${{h.st.grade||'—'}}</span></td>
+        ${{scoreBar(h.st.overall)}}
+        <td class="sec">${{h.pos.shares.toFixed(4)}}</td>
+        <td>${{h.pos.cost_basis.toFixed(2)}}</td>
+        <td>${{h.curPrice.toFixed(2)}}</td>
+        <td>${{fmtUsd(h.mv)}}</td>
+        <td class="${{h.gainPct>=0?'pos':'neg'}}">${{fmtPct(h.gainPct)}}</td>
+        <td class="${{h.gainUsd>=0?'pos':'neg'}}">${{fmtUsd(h.gainUsd)}}</td>
+        <td>${{h.weight.toFixed(1)}}%</td>
+        <td>${{targetStr}}</td>
+        <td class="${{driftCls}}">${{driftStr}}</td>
+        <td class="${{daysCls}}">${{daysStr}}</td>
+        <td>${{h.pos.bought_date||'—'}}</td>
+      </tr>`;
+    }}).join('');
   }}
 
   // ── Trade history ──────────────────────────────────────────────────────
@@ -699,13 +733,16 @@ function renderPerformance() {{
     tbody.innerHTML=`<tr><td colspan="7" class="empty"><span>—</span>No trades yet</td></tr>`;
   }} else {{
     tbody.innerHTML = tradesSorted.map(t => {{
-      const isBuy  = t.action==='BUY';
+      const isBuy  = t.action==='BUY' || t.action==='TOP';
+      const isTrim = t.action==='TRIM';
       const val    = isBuy ? t.cost : t.proceeds;
       const gainPct= t.gain_pct != null ? fmtPct(t.gain_pct) : '—';
       const gainCls= t.gain_pct != null ? (t.gain_pct>=0?'pos':'neg') : '';
+      const acColor= isBuy ? 'var(--pos)' : isTrim ? '#b05800' : 'var(--neg)';
+      const acLabel= t.action;
       return `<tr>
         <td>${{t.date}}</td>
-        <td style="color:${{isBuy?'var(--pos)':'var(--neg)'}};font-weight:700">${{t.action}}</td>
+        <td style="color:${{acColor}};font-weight:700">${{acLabel}}</td>
         <td class="c-ticker">${{t.ticker}}</td>
         <td>${{t.shares.toFixed(4)}}</td>
         <td>${{t.price.toFixed(2)}}</td>
