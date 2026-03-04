@@ -248,14 +248,39 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                         return None
 
                     def get_eps_row(df):
-                        for n in ["Diluted EPS", "Basic EPS",
-                                  "Basic And Diluted EPS", "EPS"]:
+                        # Explicit EPS row names — ordered from most to least preferred
+                        for n in ["Diluted EPS", "Basic EPS", "Basic And Diluted EPS",
+                                  "EPS", "EPS (Diluted)", "Diluted Earnings Per Share",
+                                  "Earnings Per Share", "EPS Diluted"]:
+                            if n in df.index:
+                                try:
+                                    return df.loc[n].astype(float)
+                                except Exception:
+                                    pass
+                        # Fuzzy fallback: any row whose name contains 'earnings per share'
+                        for idx in df.index:
+                            il = str(idx).lower()
+                            if "earnings per share" in il:
+                                try:
+                                    return df.loc[idx].astype(float)
+                                except Exception:
+                                    pass
+                        # Last resort: Net Income (YoY% ≈ EPS% when shares are stable)
+                        for n in ["Net Income", "Net Income Common Stockholders",
+                                  "Net Income Applicable To Common Shares"]:
                             if n in df.index:
                                 try:
                                     return df.loc[n].astype(float)
                                 except Exception:
                                     pass
                         return None
+
+                    # ── Normalize timestamps: strip tz for safe naive/aware comparison ──
+                    def ts_naive(ts):
+                        try:
+                            return ts.tz_localize(None) if ts.tzinfo else ts
+                        except Exception:
+                            return ts
 
                     # ── Safe scalar from Series ────────────────────────────
                     def sv(series, i):
@@ -304,8 +329,8 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                                 if rev_a is not None:
                                     # TTM ends at the most recent quarter date;
                                     # TTM starts approximately 1 year before that.
-                                    ttm_end   = q_inc.columns[0]   # newest quarter date
-                                    ttm_start = q_inc.columns[3]   # oldest quarter in TTM
+                                    ttm_end   = ts_naive(q_inc.columns[0])   # newest quarter date
+                                    ttm_start = ts_naive(q_inc.columns[3])   # oldest quarter in TTM
 
                                     # Walk annual columns to find the first one
                                     # whose date is strictly before ttm_start.
@@ -313,35 +338,41 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                                     # that overlaps with our TTM window.
                                     prior = None
                                     for col_i, col_date in enumerate(a_s.columns):
-                                        if col_date < ttm_start:
+                                        if ts_naive(col_date) < ttm_start:
                                             prior = sv(rev_a, col_i)
                                             break
 
                                     rev_growth_ttm = pct_chg(ttm, prior)
 
                     # ── Revenue acceleration ───────────────────────────────
-                    # Q0 YoY vs Q1 YoY — need year-ago quarter values.
-                    # Prefer exact year-ago quarters (nq>=5/6); annual/4 fallback.
+                    # Q0 YoY vs Q1 YoY growth rate — need year-ago values.
+                    # Use exact quarterly ya when nq>=5/6; otherwise fall back
+                    # to annual/4.  Key fix: BOTH ya values use the SAME prior
+                    # year annual (not annual[0] for one and annual[1] for other).
                     if rev_q is not None and nq >= 2:
                         q0    = sv(rev_q, 0)
                         q1    = sv(rev_q, 1)
                         q0_ya = sv(rev_q, 4) if nq >= 5 else None
                         q1_ya = sv(rev_q, 5) if nq >= 6 else None
 
-                        if (q0_ya is None or q1_ya is None) \
-                                and a_inc is not None and not a_inc.empty:
+                        if (q0_ya is None or q1_ya is None)                                 and a_inc is not None and not a_inc.empty:
                             a_s   = a_inc.sort_index(axis=1, ascending=False)
                             rev_a = get_rev_row(a_s)
-                            if rev_a is not None and len(rev_a) >= 2:
-                                yr0 = sv(rev_a, 0)
-                                yr1 = sv(rev_a, 1)
-                                if q0_ya is None and yr0:
-                                    q0_ya = yr0 / 4
-                                if q1_ya is None and yr1:
-                                    q1_ya = yr1 / 4
+                            if rev_a is not None:
+                                # Find ONE prior-year annual: most recent whose
+                                # date is before the oldest quarter we have
+                                oldest_q = ts_naive(q_inc.columns[min(3, nq - 1)])
+                                prior_yr = None
+                                for col_i, col_date in enumerate(a_s.columns):
+                                    if ts_naive(col_date) < oldest_q:
+                                        prior_yr = sv(rev_a, col_i)
+                                        break
+                                if prior_yr:
+                                    avg = prior_yr / 4
+                                    if q0_ya is None: q0_ya = avg
+                                    if q1_ya is None: q1_ya = avg
 
-                        if all(v is not None for v in [q0, q1, q0_ya, q1_ya]) \
-                                and q0_ya != 0 and q1_ya != 0:
+                        if all(v is not None for v in [q0, q1, q0_ya, q1_ya])                                 and q0_ya != 0 and q1_ya != 0:
                             yoy0 = (q0 - q0_ya) / abs(q0_ya) * 100
                             yoy1 = (q1 - q1_ya) / abs(q1_ya) * 100
                             rev_accel = round(yoy0 - yoy1, 2)
@@ -359,35 +390,38 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                                 a_s   = a_inc.sort_index(axis=1, ascending=False)
                                 eps_a = get_eps_row(a_s)
                                 if eps_a is not None:
-                                    ttm_start = q_inc.columns[3]
+                                    ttm_start = ts_naive(q_inc.columns[3])
                                     prior_e   = None
                                     for col_i, col_date in enumerate(a_s.columns):
-                                        if col_date < ttm_start:
+                                        if ts_naive(col_date) < ttm_start:
                                             prior_e = sv(eps_a, col_i)
                                             break
                                     eps_growth_ttm = pct_chg(ttm_e, prior_e)
 
                     # ── EPS acceleration ───────────────────────────────────
+                    # Same single-prior-year fix as rev_accel.
                     if eps_q is not None and nq >= 2:
                         e0    = sv(eps_q, 0)
                         e1    = sv(eps_q, 1)
                         e0_ya = sv(eps_q, 4) if nq >= 5 else None
                         e1_ya = sv(eps_q, 5) if nq >= 6 else None
 
-                        if (e0_ya is None or e1_ya is None) \
-                                and a_inc is not None and not a_inc.empty:
+                        if (e0_ya is None or e1_ya is None)                                 and a_inc is not None and not a_inc.empty:
                             a_s   = a_inc.sort_index(axis=1, ascending=False)
                             eps_a = get_eps_row(a_s)
-                            if eps_a is not None and len(eps_a) >= 2:
-                                yr0 = sv(eps_a, 0)
-                                yr1 = sv(eps_a, 1)
-                                if e0_ya is None and yr0:
-                                    e0_ya = yr0 / 4
-                                if e1_ya is None and yr1:
-                                    e1_ya = yr1 / 4
+                            if eps_a is not None:
+                                oldest_q = ts_naive(q_inc.columns[min(3, nq - 1)])
+                                prior_yr_e = None
+                                for col_i, col_date in enumerate(a_s.columns):
+                                    if ts_naive(col_date) < oldest_q:
+                                        prior_yr_e = sv(eps_a, col_i)
+                                        break
+                                if prior_yr_e:
+                                    avg_e = prior_yr_e / 4
+                                    if e0_ya is None: e0_ya = avg_e
+                                    if e1_ya is None: e1_ya = avg_e
 
-                        if all(v is not None for v in [e0, e1, e0_ya, e1_ya]) \
-                                and e0_ya != 0 and e1_ya != 0:
+                        if all(v is not None for v in [e0, e1, e0_ya, e1_ya])                                 and e0_ya != 0 and e1_ya != 0:
                             yoy0 = (e0 - e0_ya) / abs(e0_ya) * 100
                             yoy1 = (e1 - e1_ya) / abs(e1_ya) * 100
                             eps_accel = round(yoy0 - yoy1, 2)
