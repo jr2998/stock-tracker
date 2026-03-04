@@ -25,6 +25,20 @@ BUY_THRESHOLD    = 65.0   # buy A and B rated stocks (overall >= 65)
 SELL_THRESHOLD   = 52.0   # sell when grade drops to C (overall < 52)
 RESET_PORTFOLIO  = True   # set to False after first run to preserve history
 
+# ── Rebalancing parameters ────────────────────────────────────────────────────
+# Weights are score-proportional with a super-linear exponent so that a
+# score of 88 receives meaningfully more capital than a score of 70.
+CONVICTION_POWER  = 1.5   # score exponent: 1.0=linear, 2.0=very concentrated
+MAX_POSITION      = 0.10  # no single holding exceeds 10% of portfolio
+MIN_POSITION      = 0.015 # no eligible holding falls below 1.5%
+DRIFT_THRESHOLD   = 0.03  # 3pp absolute drift before acting on underweights
+OVERWEIGHT_THRESH = 0.05  # 5pp over target before trimming (absent tax concern)
+MIN_TRADE_USD     = 2_000 # ignore any trade worth less than this (prevents churn)
+# Tax-aware trimming
+SHORT_TERM_DAYS   = 365   # positions held < 365 days attract short-term CGT
+SHORT_TERM_RATE   = 0.35  # assumed marginal tax rate on short-term gains
+TAX_HURDLE_DRIFT  = 0.04  # ST gain positions need 4pp extra drift to justify trim
+
 # ─────────────────────────────────────────────────────────────────────────────
 # SCORING MODEL
 # ─────────────────────────────────────────────────────────────────────────────
@@ -343,101 +357,265 @@ def _refresh_spy(portfolio):
         portfolio["spy_history"] = spy_h
     return portfolio
 
+def _target_weights(eligible_records):
+    """
+    Compute score-weighted target allocations for all eligible stocks.
+
+    Uses a super-linear conviction exponent so a score of 88 receives
+    meaningfully more capital than a score of 70 — not just proportionally
+    more.  Positions are then clamped between MIN_POSITION and MAX_POSITION
+    and renormalised to sum to 1.0.
+
+    Returns {ticker: target_fraction}, e.g. {"NVDA": 0.088, "META": 0.081}
+    """
+    if not eligible_records:
+        return {}
+
+    raw = {r["ticker"]: r["overall"] ** CONVICTION_POWER for r in eligible_records}
+    total_raw = sum(raw.values()) or 1.0
+    w = {t: v / total_raw for t, v in raw.items()}
+    w = {t: max(MIN_POSITION, min(MAX_POSITION, wt)) for t, wt in w.items()}
+    total_w = sum(w.values()) or 1.0
+    return {t: wt / total_w for t, wt in w.items()}
+
+
+def _days_held(pos, today):
+    """Return how many days a position has been held (None-safe)."""
+    bd = pos.get("bought_date")
+    if not bd:
+        return 9999   # treat missing date as long-term
+    try:
+        return (today - date.fromisoformat(bd)).days
+    except (ValueError, TypeError):
+        return 9999
+
+
+def _is_short_term_gain(pos, cur_price, today):
+    """True if the position has an unrealised gain AND was bought < 365 days ago."""
+    return (_days_held(pos, today) < SHORT_TERM_DAYS
+            and cur_price > pos.get("cost_basis", cur_price))
+
+
+def _trim_shares(ticker, pos, cur_price, trim_usd, today_str, cash, trades):
+    """
+    Sell `trim_usd` worth of shares from an existing position.
+    Mutates pos, cash (returned), and appends to trades.
+    """
+    shares_to_sell = min(trim_usd / cur_price, pos["shares"])
+    if shares_to_sell <= 0:
+        return cash
+    proceeds   = shares_to_sell * cur_price
+    gain_pct   = round((cur_price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2)                  if pos.get("cost_basis") else 0
+    pos["shares"] = round(pos["shares"] - shares_to_sell, 6)
+    pos["last_price"] = round(cur_price, 4)
+    cash += proceeds
+    trades.append({
+        "date": today_str, "action": "TRIM", "ticker": ticker,
+        "shares": round(shares_to_sell, 6), "price": round(cur_price, 2),
+        "proceeds": round(proceeds, 2), "gain_pct": gain_pct,
+    })
+    print(f"    TRIM {ticker}: {shares_to_sell:.4f} sh @ ${cur_price:.2f}"
+          f"  (gain {gain_pct:+.1f}%,  proceeds ${proceeds:,.0f})")
+    return cash
+
+
 def _update_portfolio(records, portfolio):
     """
-    Buy/sell based on grade thresholds and update all holdings prices.
-    records must be formatted (scored) records — they must have 'overall' and 'price_raw'.
+    Smart tax-aware rebalancing.
+
+    Pass 1 — Forced sells: grade has dropped below SELL_THRESHOLD or ticker
+              vanished from the universe.  Always executed regardless of tax.
+
+    Pass 2 — Compute target weights across all current + new eligible tickers.
+
+    Pass 3 — Trims: positions significantly over their target weight.
+              - Long-term positions (≥365 days): trim if > target + OVERWEIGHT_THRESH
+              - Short-term LOSS positions: trim freely (tax-loss harvesting)
+              - Short-term GAIN positions: trim only if drift > TAX_HURDLE_DRIFT
+              - All trims: minimum trade size of MIN_TRADE_USD
+
+    Pass 4 — Buys: new eligible tickers not yet held, bought at target weight.
+              Existing under-weight positions get topped-up if cash is available
+              and the shortfall exceeds DRIFT_THRESHOLD + MIN_TRADE_USD.
+
+    Pass 5 — Price refresh for all current holdings; history snapshot.
     """
-    today_str = date.today().isoformat()
+    today     = date.today()
+    today_str = today.isoformat()
     stock_map = {r["ticker"]: r for r in records}
     holdings  = portfolio.get("holdings", {})
     cash      = portfolio.get("cash", PORTFOLIO_START)
     history   = portfolio.get("history", [])
     trades    = portfolio.get("trades", [])
 
-    # ── Sell below threshold or dropped from universe ──────────────────────
+    # ── helper: current price for a holding ───────────────────────────────
+    def cur_price(ticker, pos):
+        st = stock_map.get(ticker)
+        if st and st.get("price_raw") and st["price_raw"] > 0:
+            return float(st["price_raw"])
+        return float(pos.get("last_price") or pos.get("cost_basis") or 1)
+
+    # ── Pass 1: forced sells (grade/universe) ─────────────────────────────
     to_sell = [
-        ticker for ticker, pos in holdings.items()
-        if ticker not in stock_map
-        or (stock_map[ticker].get("overall") or 0) < SELL_THRESHOLD
+        t for t, pos in holdings.items()
+        if t not in stock_map
+        or (stock_map[t].get("overall") or 0) < SELL_THRESHOLD
     ]
     for ticker in to_sell:
         pos      = holdings.pop(ticker)
-        stock    = stock_map.get(ticker)
-        price    = (stock["price_raw"] if stock and stock.get("price_raw")
-                    else pos.get("last_price", pos["cost_basis"]))
+        price    = cur_price(ticker, pos)
         proceeds = pos["shares"] * price
         cash    += proceeds
         gain_pct = (round((price - pos["cost_basis"]) / pos["cost_basis"] * 100, 2)
-                    if pos["cost_basis"] else 0)
+                    if pos.get("cost_basis") else 0)
         trades.append({
-            "date":     today_str, "action":   "SELL", "ticker":   ticker,
-            "shares":   pos["shares"], "price": round(price, 2),
+            "date": today_str, "action": "SELL", "ticker": ticker,
+            "shares": pos["shares"], "price": round(price, 2),
             "proceeds": round(proceeds, 2), "gain_pct": gain_pct,
         })
-        print(f"    SELL {ticker}: gain={gain_pct:+.1f}%")
+        print(f"    SELL {ticker}: gain={gain_pct:+.1f}%  (grade dropped)")
 
-    # ── Buy new candidates (scored >= BUY_THRESHOLD, not already held) ────
-    buy_candidates = [
+    # ── Pass 2: compute target weights ────────────────────────────────────
+    # Eligible = currently held (above threshold) + new candidates above threshold
+    # We compute weights across ALL of them so trims and buys are self-consistent.
+    eligible = [
         r for r in records
         if (r.get("overall") or 0) >= BUY_THRESHOLD
-        and r["ticker"] not in holdings
         and r.get("price_raw") and r["price_raw"] > 0
     ]
-    if buy_candidates:
-        existing_score_sum = sum(
-            stock_map[t].get("overall", 0)
-            for t in holdings if stock_map.get(t)
-        )
-        total_score = (sum(r["overall"] for r in buy_candidates)
-                       + existing_score_sum) or 1
-        holdings_mv = sum(
-            pos["shares"] * (stock_map[t]["price_raw"]
-                             if stock_map.get(t) and stock_map[t].get("price_raw")
-                             else pos["last_price"])
-            for t, pos in holdings.items()
-        )
-        total_portfolio = holdings_mv + cash
-        for r in buy_candidates:
-            weight     = r["overall"] / total_score
-            target_val = total_portfolio * weight
-            price      = r["price_raw"]
-            affordable = min(target_val, cash * 0.98)
-            if affordable < price:
-                continue
-            shares = affordable / price
-            cost   = shares * price
-            cash  -= cost
-            holdings[r["ticker"]] = {
-                "shares":      round(shares, 6),
-                "cost_basis":  round(price, 4),
-                "last_price":  round(price, 4),
-                "bought_date": today_str,
-            }
-            trades.append({
-                "date": today_str, "action": "BUY", "ticker": r["ticker"],
-                "shares": round(shares, 6), "price": round(price, 2),
-                "cost":   round(cost, 2),
-            })
-            print(f"    BUY  {r['ticker']}: {shares:.4f} sh @ ${price:.2f}")
+    targets = _target_weights(eligible)   # {ticker: fraction}
 
-    # ── Update last prices for all current holdings ────────────────────────
+    # Current portfolio value (before any rebalancing)
+    holdings_mv = sum(pos["shares"] * cur_price(t, pos) for t, pos in holdings.items())
+    total_value = holdings_mv + cash
+
+    # ── Pass 3: trims ─────────────────────────────────────────────────────
+    # Process heaviest over-weights first so cash freed can fund new buys.
+    overweight_order = sorted(
+        [(t, pos) for t, pos in holdings.items() if t in targets],
+        key=lambda x: -(x[1]["shares"] * cur_price(x[0], x[1])) / max(total_value, 1)
+    )
+    for ticker, pos in overweight_order:
+        if total_value <= 0:
+            break
+        price       = cur_price(ticker, pos)
+        mv          = pos["shares"] * price
+        current_pct = mv / total_value
+        target_pct  = targets[ticker]
+        drift       = current_pct - target_pct       # positive = overweight
+
+        if drift <= 0:
+            continue
+
+        trim_usd = drift * total_value               # $ amount to trim
+        if trim_usd < MIN_TRADE_USD:
+            continue                                  # not worth trading
+
+        st_gain = _is_short_term_gain(pos, price, today)
+
+        if st_gain:
+            # Only trim if drift exceeds the tax hurdle
+            if drift <= OVERWEIGHT_THRESH + TAX_HURDLE_DRIFT:
+                print(f"    HOLD {ticker}: overweight {drift*100:.1f}pp "
+                      f"but ST gain — below tax hurdle "
+                      f"(need >{(OVERWEIGHT_THRESH+TAX_HURDLE_DRIFT)*100:.0f}pp)")
+                continue
+        else:
+            # Long-term or unrealised loss: only trim if materially overweight
+            if drift <= OVERWEIGHT_THRESH:
+                continue
+
+        cash = _trim_shares(ticker, pos, price, trim_usd, today_str, cash, trades)
+        # Remove position if shares trimmed to near zero
+        if pos["shares"] < 0.0001:
+            holdings.pop(ticker)
+        # Recalculate total_value after trim
+        holdings_mv = sum(p["shares"] * cur_price(t, p) for t, p in holdings.items())
+        total_value = holdings_mv + cash
+
+    # ── Pass 4a: new buys ─────────────────────────────────────────────────
+    new_tickers = [t for t in targets if t not in holdings]
+    for ticker in sorted(new_tickers, key=lambda t: -targets[t]):
+        target_usd  = targets[ticker] * total_value
+        price       = float(stock_map[ticker]["price_raw"])
+        affordable  = min(target_usd, cash * 0.98)
+        if affordable < max(price, MIN_TRADE_USD):
+            continue
+        shares = affordable / price
+        cost   = shares * price
+        cash  -= cost
+        holdings[ticker] = {
+            "shares":      round(shares, 6),
+            "cost_basis":  round(price, 4),
+            "last_price":  round(price, 4),
+            "bought_date": today_str,
+        }
+        trades.append({
+            "date": today_str, "action": "BUY", "ticker": ticker,
+            "shares": round(shares, 6), "price": round(price, 2),
+            "cost":   round(cost, 2),
+        })
+        print(f"    BUY  {ticker}: {shares:.4f} sh @ ${price:.2f}"
+              f"  (target {targets[ticker]*100:.1f}%,  cost ${cost:,.0f})")
+        holdings_mv = sum(p["shares"] * cur_price(t, p) for t, p in holdings.items())
+        total_value = holdings_mv + cash
+
+    # ── Pass 4b: top-up existing under-weights ────────────────────────────
+    for ticker, pos in sorted(holdings.items(),
+                               key=lambda x: targets.get(x[0], 0) -
+                               (x[1]["shares"] * cur_price(x[0], x[1])) / max(total_value, 1)):
+        if ticker not in targets:
+            continue
+        price       = cur_price(ticker, pos)
+        mv          = pos["shares"] * price
+        current_pct = mv / max(total_value, 1)
+        target_pct  = targets[ticker]
+        shortfall   = target_pct - current_pct      # positive = underweight
+
+        if shortfall < DRIFT_THRESHOLD:
+            continue
+
+        topup_usd = shortfall * total_value
+        if topup_usd < MIN_TRADE_USD or topup_usd > cash * 0.98:
+            continue
+
+        shares_add = topup_usd / price
+        cost       = shares_add * price
+        cash      -= cost
+        pos["shares"]     = round(pos["shares"] + shares_add, 6)
+        pos["last_price"] = round(price, 4)
+        trades.append({
+            "date": today_str, "action": "BUY", "ticker": ticker,
+            "shares": round(shares_add, 6), "price": round(price, 2),
+            "cost":   round(cost, 2),
+        })
+        print(f"    TOP  {ticker}: +{shares_add:.4f} sh @ ${price:.2f}"
+              f"  (under {shortfall*100:.1f}pp,  cost ${cost:,.0f})")
+        holdings_mv = sum(p["shares"] * cur_price(t, p) for t, p in holdings.items())
+        total_value = holdings_mv + cash
+
+    # ── Pass 5: refresh prices + history snapshot ─────────────────────────
     holdings_mv = 0
     for ticker, pos in holdings.items():
-        stock = stock_map.get(ticker)
-        if stock and stock.get("price_raw"):
-            pos["last_price"] = round(stock["price_raw"], 4)
+        st = stock_map.get(ticker)
+        if st and st.get("price_raw"):
+            pos["last_price"] = round(float(st["price_raw"]), 4)
         holdings_mv += pos["shares"] * pos["last_price"]
 
     total_value = holdings_mv + cash
     if not history or history[-1]["date"] != today_str:
         history.append({"date": today_str, "value": round(total_value, 2),
                         "cash": round(cash, 2)})
+    else:
+        history[-1]["value"] = round(total_value, 2)
 
     portfolio.update({
-        "holdings": holdings, "cash": round(cash, 2),
-        "total_value": round(total_value, 2), "history": history,
-        "trades": trades, "updated_at": today_str,
+        "holdings":    holdings,
+        "cash":        round(cash, 2),
+        "total_value": round(total_value, 2),
+        "history":     history,
+        "trades":      trades,
+        "updated_at":  today_str,
     })
     return portfolio
 
