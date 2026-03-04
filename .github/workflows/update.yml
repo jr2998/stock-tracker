@@ -2,8 +2,24 @@ name: Update Stock Data
 
 on:
   schedule:
-    - cron: '0 0 * * 1'   # Monday midnight UTC (8 PM ET Sunday)
+    # Weekly full scrape: Sunday 11 PM ET (Monday 04:00 UTC)
+    # Refreshes fundamentals, re-grades everything, rebalances portfolio
+    - cron: '0 4 * * 1'
+
+    # Daily price update: Mon-Fri 9 PM ET (02:00 UTC next day)
+    # Updates portfolio prices only — no scraping, runs in ~30 seconds
+    - cron: '0 2 * * 2-6'
+
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Run mode'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+          - daily       # price update only
+          - weekly      # full scrape + grade + rebalance
 
 permissions:
   contents: write
@@ -27,19 +43,49 @@ jobs:
           pip install --upgrade pip
           pip install yfinance pandas numpy lxml html5lib beautifulsoup4
 
-      - name: Fetch raw data
+      # ── Determine run mode ──────────────────────────────────────────────────
+      # Monday trigger (cron 0 4 * * 1) = weekly
+      # Tue-Sat trigger (cron 0 2 * * 2-6) = daily
+      # Manual dispatch uses the selected input
+      - name: Set run mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
+          elif [ "$(date -u +%u)" = "1" ]; then
+            echo "mode=weekly" >> $GITHUB_OUTPUT
+          else
+            echo "mode=daily" >> $GITHUB_OUTPUT
+          fi
+
+      # ── Weekly: full scrape → grade → rebalance ─────────────────────────────
+      - name: Fetch raw data (weekly)
+        if: steps.mode.outputs.mode == 'weekly'
         run: python scraper.py
 
-      - name: Grade stocks
+      - name: Grade stocks (weekly)
+        if: steps.mode.outputs.mode == 'weekly'
         run: python grader.py
 
+      # ── Daily: price update only ─────────────────────────────────────────────
+      - name: Update prices (daily)
+        if: steps.mode.outputs.mode == 'daily'
+        run: python price_updater.py
+
+      # ── Always: regenerate HTML ──────────────────────────────────────────────
       - name: Generate HTML
         run: python generate_html.py
 
+      # ── Commit changed files ─────────────────────────────────────────────────
       - name: Commit & push
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add raw_data.json data.json portfolio.json index.html
-          git diff --cached --quiet || git commit -m "chore: update stock data $(date -u '+%Y-%m-%d %H:%M UTC')"
+          if [ "${{ steps.mode.outputs.mode }}" = "weekly" ]; then
+            git add raw_data.json data.json portfolio.json index.html
+            git diff --cached --quiet || git commit -m "chore: weekly update $(date -u '+%Y-%m-%d')"
+          else
+            git add portfolio.json index.html
+            git diff --cached --quiet || git commit -m "chore: daily prices $(date -u '+%Y-%m-%d')"
+          fi
           git push
