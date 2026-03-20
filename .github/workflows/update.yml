@@ -1,25 +1,36 @@
 name: Update Stock Data
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Schedules
+#   Weekly  — Sunday 11 PM ET (Monday 04:00 UTC)
+#             Full scrape → grade → portfolio rebalance → publish
+#   Daily   — Mon–Fri 9 PM ET (Tue–Sat 02:00 UTC)
+#             Price refresh for held positions only (~30 seconds)
+#
+# Manual dispatch (Actions tab → Run workflow)
+#   reset   ← run this ONCE after pushing updated files for the first time
+#             Scrapes fresh data, rebuilds the 25-stock portfolio from scratch,
+#             and resets the performance history to today.
+#   weekly  ← full scrape + grade + rebalance (same as the Sunday cron)
+#   daily   ← price update only
+# ─────────────────────────────────────────────────────────────────────────────
+
 on:
   schedule:
-    # Weekly full scrape: Sunday 11 PM ET (Monday 04:00 UTC)
-    # Refreshes fundamentals, re-grades everything, rebalances portfolio
-    - cron: '0 4 * * 1'
-
-    # Daily price update: Mon-Fri 9 PM ET (02:00 UTC next day)
-    # Updates portfolio prices only — no scraping, runs in ~30 seconds
-    - cron: '0 2 * * 2-6'
+    - cron: '0 4 * * 1'    # Weekly: Monday 04:00 UTC = Sunday 11 PM ET
+    - cron: '0 2 * * 2-6'  # Daily:  Tue–Sat 02:00 UTC = Mon–Fri 9 PM ET
 
   workflow_dispatch:
     inputs:
       mode:
         description: 'Run mode'
         required: true
-        default: 'daily'
+        default: 'reset'
         type: choice
         options:
-          - daily       # price update only
-          - weekly      # full scrape + grade + rebalance
+          - reset   # one-time: scrape + grade + rebuild portfolio + publish
+          - weekly  # full scrape + grade + rebalance
+          - daily   # price update only
 
 permissions:
   contents: write
@@ -30,62 +41,113 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: Checkout repo
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      # ── 2. Python setup ──────────────────────────────────────────────────────
+      - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-yfinance
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install yfinance pandas numpy lxml html5lib beautifulsoup4
 
-      # ── Determine run mode ──────────────────────────────────────────────────
-      # Monday trigger (cron 0 4 * * 1) = weekly
-      # Tue-Sat trigger (cron 0 2 * * 2-6) = daily
-      # Manual dispatch uses the selected input
-      - name: Set run mode
+      # ── 3. Determine run mode ─────────────────────────────────────────────────
+      # Scheduled Monday trigger  → weekly
+      # Scheduled Tue–Sat trigger → daily
+      # Manual dispatch           → whatever was selected (default: reset)
+      - name: Determine run mode
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
+
           elif [ "$(date -u +%u)" = "1" ]; then
             echo "mode=weekly" >> $GITHUB_OUTPUT
+
           else
             echo "mode=daily" >> $GITHUB_OUTPUT
           fi
 
-      # ── Weekly: full scrape → grade → rebalance ─────────────────────────────
-      - name: Fetch raw data (weekly)
+          echo "Detected mode: $(cat $GITHUB_OUTPUT | grep mode | cut -d= -f2)"
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # MODE: reset
+      # Run once after pushing updated files.  Scrapes fresh data, scores every
+      # stock, rebuilds the portfolio from the top 25 picks, publishes the site.
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: "[reset] Scrape fresh fundamentals"
+        if: steps.mode.outputs.mode == 'reset'
+        run: python scraper.py
+
+      - name: "[reset] Grade stocks"
+        if: steps.mode.outputs.mode == 'reset'
+        run: python grader.py
+
+      - name: "[reset] Rebuild portfolio (top 25 picks, clean history)"
+        if: steps.mode.outputs.mode == 'reset'
+        run: python reset_portfolio.py
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # MODE: weekly
+      # Regular Sunday night run.  Re-scrapes all ~530 tickers, re-grades,
+      # runs the buy-and-hold portfolio update (sells grade failures, fills
+      # vacant slots, trims extreme over-weights).
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: "[weekly] Scrape fresh fundamentals"
         if: steps.mode.outputs.mode == 'weekly'
         run: python scraper.py
 
-      - name: Grade stocks (weekly)
+      - name: "[weekly] Grade stocks + update portfolio"
         if: steps.mode.outputs.mode == 'weekly'
         run: python grader.py
 
-      # ── Daily: price update only ─────────────────────────────────────────────
-      - name: Update prices (daily)
+      # ─────────────────────────────────────────────────────────────────────────
+      # MODE: daily
+      # Fast weeknight run.  Fetches current prices for held positions only,
+      # updates portfolio value and SPY benchmark, appends to history.
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: "[daily] Refresh holding prices"
         if: steps.mode.outputs.mode == 'daily'
         run: python price_updater.py
 
-      # ── Always: regenerate HTML ──────────────────────────────────────────────
-      - name: Generate HTML
+      # ── 4. Regenerate HTML (all modes) ───────────────────────────────────────
+      - name: Generate index.html
         run: python generate_html.py
 
-      # ── Commit changed files ─────────────────────────────────────────────────
-      - name: Commit & push
+      # ── 5. Commit and push ───────────────────────────────────────────────────
+      - name: Commit and push changes
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          if [ "${{ steps.mode.outputs.mode }}" = "weekly" ]; then
+
+          MODE="${{ steps.mode.outputs.mode }}"
+          DATE="$(date -u '+%Y-%m-%d')"
+
+          if [ "$MODE" = "reset" ]; then
             git add raw_data.json data.json portfolio.json index.html
-            git diff --cached --quiet || git commit -m "chore: weekly update $(date -u '+%Y-%m-%d')"
+            git diff --cached --quiet || \
+              git commit -m "reset: clean 25-stock portfolio ${DATE}"
+
+          elif [ "$MODE" = "weekly" ]; then
+            git add raw_data.json data.json portfolio.json index.html
+            git diff --cached --quiet || \
+              git commit -m "chore: weekly update ${DATE}"
+
           else
             git add portfolio.json index.html
-            git diff --cached --quiet || git commit -m "chore: daily prices $(date -u '+%Y-%m-%d')"
+            git diff --cached --quiet || \
+              git commit -m "chore: daily prices ${DATE}"
           fi
+
           git push
