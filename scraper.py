@@ -171,16 +171,30 @@ def fetch_ticker_data(symbol, require_min_cap=True):
             if price and target_price and price > 0:
                 analyst_upside = round((target_price - price) / price * 100, 2)
 
-            # 52-week performance via actual history
+            # 52-week performance via actual history.
+            # Deliberately decoupled from `price` (info-level): if Yahoo's
+            # currentPrice is stale or missing (CTRA, BR, thin-coverage tickers),
+            # we can still compute perf from the history itself using the most
+            # recent Close as the "current" price.
             perf_52w = None
             try:
                 hist = tk.history(period="1y", auto_adjust=True)
-                if not hist.empty and price:
-                    price_1y_ago = float(hist["Close"].iloc[0])
-                    if price_1y_ago > 0:
-                        perf_52w = round((price - price_1y_ago) / price_1y_ago * 100, 2)
+                if not hist.empty:
+                    price_now  = float(hist["Close"].iloc[-1])   # most recent bar
+                    price_1y   = float(hist["Close"].iloc[0])    # oldest bar (~1y ago)
+                    if price_now > 0 and price_1y > 0:
+                        perf_52w = round((price_now - price_1y) / price_1y * 100, 2)
             except Exception:
                 pass
+
+            # Secondary fallback: Yahoo pre-computes 52WeekChange as a decimal
+            if perf_52w is None:
+                try:
+                    wk52 = safe(info.get("52WeekChange"))
+                    if wk52 is not None:
+                        perf_52w = round(wk52 * 100, 2)
+                except Exception:
+                    pass
 
             # ── Valuation ─────────────────────────────────────────────────
             forward_pe  = safe(info.get("forwardPE"))
@@ -338,12 +352,23 @@ def fetch_ticker_data(symbol, require_min_cap=True):
 
                     # ── Row finders ────────────────────────────────────────
                     def get_rev_row(df):
-                        """Revenue row — explicit names only (avoid 'Cost of Revenue')."""
+                        """Revenue row — explicit names first, then fuzzy match.
+                        Covers non-standard names (AVGO: 'Net Revenue', KEYS:
+                        'Net Revenues') while still excluding cost rows.
+                        """
                         for n in ["Total Revenue", "Revenue", "Net Revenue",
                                   "Operating Revenue", "Total Net Revenue"]:
                             if n in df.index:
                                 try:
                                     return df.loc[n].astype(float)
+                                except Exception:
+                                    pass
+                        # Fuzzy: any row containing "revenue" but not "cost"
+                        for idx in df.index:
+                            il = str(idx).lower()
+                            if "revenue" in il and "cost" not in il:
+                                try:
+                                    return df.loc[idx].astype(float)
                                 except Exception:
                                     pass
                         return None
@@ -468,7 +493,10 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                                     if ts_naive(col_date) < oldest_q:
                                         prior_yr = sv(rev_a, col_i)
                                         break
-                                if prior_yr:
+                                # Use `is not None` not truthiness — zero is a
+                                # valid annual revenue/EPS value (edge case) and
+                                # falsy check silently skips it (EIX, CF, GDDY).
+                                if prior_yr is not None:
                                     avg = prior_yr / 4
                                     if q0_ya is None: q0_ya = avg
                                     if q1_ya is None: q1_ya = avg
@@ -517,7 +545,9 @@ def fetch_ticker_data(symbol, require_min_cap=True):
                                     if ts_naive(col_date) < oldest_q:
                                         prior_yr_e = sv(eps_a, col_i)
                                         break
-                                if prior_yr_e:
+                                # Same fix: zero annual EPS is valid for
+                                # breakeven/charge-year companies (EIX, GDDY).
+                                if prior_yr_e is not None:
                                     avg_e = prior_yr_e / 4
                                     if e0_ya is None: e0_ya = avg_e
                                     if e1_ya is None: e1_ya = avg_e
