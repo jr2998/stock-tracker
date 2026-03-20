@@ -24,19 +24,22 @@ scraper.py                      price_updater.py
    ↓ raw_data.json                  ↓ portfolio.json (prices only)
 grader.py                       generate_html.py
    ↓ data.json                      ↓ index.html
-   ↓ portfolio.json
-generate_html.py
-   ↓ index.html
+   ↓ portfolio.json (holds/sells/fills)
+
+One-time reset (manual trigger)
+────────────────────────────────
+scraper.py → grader.py → reset_portfolio.py → generate_html.py
 ```
 
 | Script | Role | Runtime |
 |---|---|---|
 | `scraper.py` | Fetches fundamentals for every ticker via yfinance | ~45–60 min |
-| `grader.py` | Scores and grades each stock; manages portfolio | ~5 seconds |
+| `grader.py` | Scores and grades each stock; runs buy-and-hold portfolio logic | ~5 seconds |
+| `reset_portfolio.py` | One-time script to build a clean 25-stock portfolio | ~5 seconds |
 | `price_updater.py` | Refreshes held-position prices only | ~15 seconds |
 | `generate_html.py` | Renders `index.html` from `data.json` + `portfolio.json` | ~1 second |
 
-The grader is intentionally decoupled from the scraper. To adjust the scoring model without re-scraping, edit `grader.py` and run it directly — it reads the existing `raw_data.json` and produces a new `data.json` in seconds.
+The grader is intentionally decoupled from the scraper. To adjust the scoring model without re-scraping, edit the anchor tables or weights in `grader.py` — it reads the existing `raw_data.json` and produces a new `data.json` in seconds when triggered via the `weekly` workflow mode.
 
 ---
 
@@ -110,15 +113,33 @@ Debt/Equity is excluded from scoring for **Financials** and **Utilities** — le
 
 ---
 
-## Simulated portfolio
+## Portfolio
 
-The portfolio starts with $1,000,000 in cash and follows simple rules:
+The portfolio starts with $1,000,000 and holds the top 25 stocks by score, allocated proportionally to conviction. Positions are held for the long term — the weekly run does the minimum necessary to keep the portfolio healthy, not routine rebalancing.
 
-- **Buy** stocks graded A or B (score ≥ 65), weighting allocations based on grade
-- **Sell** any holding whose grade drops to C (score < 52), recycling proceeds back to cash
-- **Benchmark** tracks SPY normalised to the same $1M start
+### Construction
 
-Portfolio rebalancing happens weekly during the full scrape. Daily price updates keep holding valuations current between scrapes without triggering any trades. The Performance Tracker page shows the portfolio value over time, current holdings with cost basis and gain/loss, and a full trade history.
+At initialisation, capital is allocated across the top 25 eligible stocks (score ≥ 65) using score-weighted sizing. A stock scoring 88 receives meaningfully more capital than one scoring 70 — not just proportionally more, but with a super-linear exponent (`score^1.5`) that rewards top-tier conviction. Individual positions are capped at 10% and floored at 1.5%, then renormalised to sum to 100%.
+
+### Weekly behaviour
+
+The weekly run has three narrowly-scoped actions:
+
+**Sell** — a position is sold only when its grade drops below C (score < 52), indicating genuine fundamental deterioration. Price movements alone never trigger a sell.
+
+**Trim** — a position is trimmed only when its market value grows beyond 2× its original target dollar allocation. Short-term gains (positions held less than 365 days) are protected from trimming even at this threshold, since the tax cost of realising a short-term gain typically outweighs the portfolio benefit.
+
+**Fill** — any slot vacated by a sell or trim is immediately filled with the highest-scoring eligible stock not already held, up to the 25-position cap. Existing positions are never topped up week-to-week.
+
+A normal week with no grade changes and no extreme price moves produces zero trades.
+
+### Daily behaviour
+
+Every weeknight, prices are refreshed for all held positions and the SPY benchmark is updated. No trades are executed.
+
+### Performance Tracker
+
+The Performance Tracker page shows portfolio value vs S&P 500 (SPY) from inception, current holdings with cost basis, gain/loss, current weight vs target weight, and days held, plus a full trade history log.
 
 ---
 
@@ -139,8 +160,8 @@ Portfolio rebalancing happens weekly during the full scrape. Daily price updates
 
 - **KPI cards** — current portfolio value, total return %, number of holdings, and trade count
 - **Return chart** — portfolio vs S&P 500 (SPY) as % return from inception, with hover tooltips
-- **Holdings table** — all current positions with shares, cost basis, current price, market value, gain/loss, and portfolio weight
-- **Trade history** — full log of every buy and sell with date, price, and realised gain %
+- **Holdings table** — all current positions with shares, cost basis, current price, market value, gain/loss, current weight, target weight, drift from target, days held, and buy date
+- **Trade history** — full log of every buy, sell, and trim with date, price, and realised gain %
 
 ---
 
