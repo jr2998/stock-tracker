@@ -665,10 +665,13 @@ function renderPerformance() {{
   // ── Holdings table ─────────────────────────────────────────────────────
   const stockMap = Object.fromEntries(STOCKS.map(s=>[s.ticker,s]));
 
-  // Mirror grader.py _target_weights() so the table shows live targets
+  // Mirror grader.py _target_weights(): top MAX_HOLDINGS picks, score-weighted
   function computeTargetWeights(stocks) {{
-    const CONV = 1.5, MAX_P = 0.10, MIN_P = 0.015;
-    const elig = stocks.filter(s => (s.overall||0) >= 65 && s.price_raw > 0);
+    const CONV = 1.5, MAX_P = 0.10, MIN_P = 0.015, MAX_H = 25;
+    const elig = stocks
+      .filter(s => (s.overall||0) >= 65 && s.price_raw > 0)
+      .sort((a,b) => (b.overall||0) - (a.overall||0))
+      .slice(0, MAX_H);
     if (!elig.length) return {{}};
     const raw = {{}};
     elig.forEach(s => {{ raw[s.ticker] = Math.pow(s.overall, CONV); }});
