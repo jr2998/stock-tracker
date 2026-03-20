@@ -326,7 +326,7 @@ def build_html(data, portfolio):
   <!-- Holdings table -->
   <div class="holdings-title">Current Holdings</div>
   <div class="tbl-wrap" style="margin-bottom:24px">
-    <table>
+    <table id="holdings-table">
       <thead><tr>
         <th data-col="ticker">Ticker</th>
         <th data-col="name">Name</th>
@@ -662,7 +662,7 @@ function renderPerformance() {{
     }}
   }});
 
-  // ── Holdings table ─────────────────────────────────────────────────────
+  // ── Holdings table (sortable) ──────────────────────────────────────────
   const stockMap = Object.fromEntries(STOCKS.map(s=>[s.ticker,s]));
 
   // Mirror grader.py _target_weights(): top MAX_HOLDINGS picks, score-weighted
@@ -684,7 +684,8 @@ function renderPerformance() {{
   }}
   const targetW = computeTargetWeights(STOCKS);
 
-  const holdArr  = Object.entries(holdings).map(([ticker,pos]) => {{
+  // Build enriched array once; sort + re-render on demand
+  const holdArr = Object.entries(holdings).map(([ticker,pos]) => {{
     const st       = stockMap[ticker] || {{}};
     const curPrice = pos.last_price || pos.cost_basis;
     const mv       = pos.shares * curPrice;
@@ -695,19 +696,64 @@ function renderPerformance() {{
     const drift    = target != null ? weight - target : null;
     const daysHeld = pos.bought_date
       ? Math.floor((Date.now() - new Date(pos.bought_date)) / 86400000) : null;
-    return {{ ticker, pos, st, curPrice, mv, gainUsd, gainPct, weight, target, drift, daysHeld }};
-  }}).sort((a,b) => b.mv - a.mv);
+    return {{ ticker, pos, st, curPrice, mv, gainUsd, gainPct,
+              weight, target, drift, daysHeld }};
+  }});
 
-  const hbody = document.getElementById('holdings-body');
-  if (!holdArr.length) {{
-    hbody.innerHTML = `<tr><td colspan="16" class="empty"><span>—</span>No current holdings</td></tr>`;
-  }} else {{
-    hbody.innerHTML = holdArr.map(h => {{
-      const driftCls = h.drift == null ? '' : h.drift > 3 ? 'neg' : h.drift < -3 ? 'pos' : 'neutral';
-      const driftStr = h.drift != null ? (h.drift>=0?'+':'')+h.drift.toFixed(1)+'pp' : '—';
+  const H_NUM = new Set(['overall','shares','cost_basis','last_price','mkt_value',
+                         'gain_pct','gain_usd','weight','target','drift','days_held']);
+  let hSortCol = 'mkt_value', hSortDir = 'desc';
+
+  function hExtract(h, col) {{
+    const map = {{
+      ticker:     h.ticker,
+      name:       h.st.name || '',
+      sector:     h.st.sector || '',
+      grade:      h.st.grade || '',
+      overall:    h.st.overall,
+      shares:     h.pos.shares,
+      cost_basis: h.pos.cost_basis,
+      last_price: h.curPrice,
+      mkt_value:  h.mv,
+      gain_pct:   h.gainPct,
+      gain_usd:   h.gainUsd,
+      weight:     h.weight,
+      target:     h.target,
+      drift:      h.drift,
+      days_held:  h.daysHeld,
+      bought_date:h.pos.bought_date || '',
+    }};
+    const v = map[col];
+    if (H_NUM.has(col)) return v ?? (hSortDir==='asc' ? Infinity : -Infinity);
+    return String(v ?? '').toLowerCase();
+  }}
+
+  function renderHoldings() {{
+    const sorted = [...holdArr].sort((a,b) => {{
+      const av = hExtract(a, hSortCol), bv = hExtract(b, hSortCol);
+      if (av < bv) return hSortDir==='asc' ? -1 : 1;
+      if (av > bv) return hSortDir==='asc' ?  1 : -1;
+      return 0;
+    }});
+
+    document.querySelectorAll('#holdings-table th').forEach(t =>
+      t.classList.remove('sorted-asc','sorted-desc'));
+    const activeHth = document.querySelector(
+      `#holdings-table th[data-col="${{hSortCol}}"]`);
+    if (activeHth) activeHth.classList.add(
+      hSortDir==='asc' ? 'sorted-asc' : 'sorted-desc');
+
+    const hbody = document.getElementById('holdings-body');
+    if (!sorted.length) {{
+      hbody.innerHTML = `<tr><td colspan="16" class="empty"><span>—</span>No current holdings</td></tr>`;
+      return;
+    }}
+    hbody.innerHTML = sorted.map(h => {{
+      const driftCls  = h.drift == null ? '' : h.drift > 3 ? 'neg' : h.drift < -3 ? 'pos' : 'neutral';
+      const driftStr  = h.drift  != null ? (h.drift>=0?'+':'')+h.drift.toFixed(1)+'pp' : '—';
       const targetStr = h.target != null ? h.target.toFixed(1)+'%' : '—';
-      const daysStr  = h.daysHeld != null ? h.daysHeld+'d' : '—';
-      const daysCls  = h.daysHeld != null && h.daysHeld < 365 ? 'neutral' : '';
+      const daysStr   = h.daysHeld != null ? h.daysHeld+'d' : '—';
+      const daysCls   = h.daysHeld != null && h.daysHeld < 365 ? 'neutral' : '';
       return `<tr>
         <td class="c-ticker">${{h.ticker}}</td>
         <td class="c-name" title="${{h.st.name||''}}">${{h.st.name||'—'}}</td>
@@ -728,6 +774,18 @@ function renderPerformance() {{
       </tr>`;
     }}).join('');
   }}
+
+  document.querySelectorAll('#holdings-table th[data-col]').forEach(th => {{
+    th.addEventListener('click', () => {{
+      const col = th.dataset.col;
+      hSortDir = hSortCol === col ? (hSortDir==='asc'?'desc':'asc')
+                                  : (H_NUM.has(col) ? 'desc' : 'asc');
+      hSortCol = col;
+      renderHoldings();
+    }});
+  }});
+
+  renderHoldings();
 
   // ── Trade history ──────────────────────────────────────────────────────
   const tbody = document.getElementById('trades-body');
