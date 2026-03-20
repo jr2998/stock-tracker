@@ -8,11 +8,11 @@ name: Update Stock Data
 #             Price refresh for held positions only (~30 seconds)
 #
 # Manual dispatch (Actions tab → Run workflow)
-#   reset   ← run this ONCE after pushing updated files for the first time
-#             Scrapes fresh data, rebuilds the 25-stock portfolio from scratch,
-#             and resets the performance history to today.
-#   weekly  ← full scrape + grade + rebalance (same as the Sunday cron)
-#   daily   ← price update only
+#   reset-only  ← USE THIS NOW — rebuilds portfolio from existing data.json,
+#                 fetches retroactive price history, publishes. ~10 seconds.
+#   reset       ← full scrape + grade + portfolio rebuild (~75 min)
+#   weekly      ← full scrape + grade + rebalance (same as Sunday cron)
+#   daily       ← price update only
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -25,12 +25,13 @@ on:
       mode:
         description: 'Run mode'
         required: true
-        default: 'reset'
+        default: 'reset-only'
         type: choice
         options:
-          - reset   # one-time: scrape + grade + rebuild portfolio + publish
-          - weekly  # full scrape + grade + rebalance
-          - daily   # price update only
+          - reset-only  # rebuild portfolio from existing data.json — no scrape (~10 sec)
+          - reset       # full scrape + grade + portfolio rebuild (~75 min)
+          - weekly      # full scrape + grade + rebalance
+          - daily       # price update only
 
 permissions:
   contents: write
@@ -63,28 +64,31 @@ jobs:
           pip install yfinance pandas numpy lxml html5lib beautifulsoup4
 
       # ── 3. Determine run mode ─────────────────────────────────────────────────
-      # Scheduled Monday trigger  → weekly
-      # Scheduled Tue–Sat trigger → daily
-      # Manual dispatch           → whatever was selected (default: reset)
       - name: Determine run mode
         id: mode
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "mode=${{ inputs.mode }}" >> $GITHUB_OUTPUT
-
           elif [ "$(date -u +%u)" = "1" ]; then
             echo "mode=weekly" >> $GITHUB_OUTPUT
-
           else
             echo "mode=daily" >> $GITHUB_OUTPUT
           fi
 
-          echo "Detected mode: $(cat $GITHUB_OUTPUT | grep mode | cut -d= -f2)"
+      # ─────────────────────────────────────────────────────────────────────────
+      # MODE: reset-only
+      # Skips the scrape entirely — uses the existing data.json already in the
+      # repo.  Runs reset_portfolio.py to rebuild the portfolio with retroactive
+      # price history fetched from Yahoo Finance.  Takes ~10 seconds.
+      # ─────────────────────────────────────────────────────────────────────────
+      - name: "[reset-only] Rebuild portfolio from existing data.json"
+        if: steps.mode.outputs.mode == 'reset-only'
+        run: python reset_portfolio.py
 
       # ─────────────────────────────────────────────────────────────────────────
       # MODE: reset
-      # Run once after pushing updated files.  Scrapes fresh data, scores every
-      # stock, rebuilds the portfolio from the top 25 picks, publishes the site.
+      # Full scrape + grade + portfolio rebuild from scratch.  Use this when
+      # you also want fresh fundamentals alongside the portfolio reset.
       # ─────────────────────────────────────────────────────────────────────────
       - name: "[reset] Scrape fresh fundamentals"
         if: steps.mode.outputs.mode == 'reset'
@@ -94,15 +98,12 @@ jobs:
         if: steps.mode.outputs.mode == 'reset'
         run: python grader.py
 
-      - name: "[reset] Rebuild portfolio (top 25 picks, clean history)"
+      - name: "[reset] Rebuild portfolio (top 25 picks, retroactive history)"
         if: steps.mode.outputs.mode == 'reset'
         run: python reset_portfolio.py
 
       # ─────────────────────────────────────────────────────────────────────────
       # MODE: weekly
-      # Regular Sunday night run.  Re-scrapes all ~530 tickers, re-grades,
-      # runs the buy-and-hold portfolio update (sells grade failures, fills
-      # vacant slots, trims extreme over-weights).
       # ─────────────────────────────────────────────────────────────────────────
       - name: "[weekly] Scrape fresh fundamentals"
         if: steps.mode.outputs.mode == 'weekly'
@@ -114,8 +115,6 @@ jobs:
 
       # ─────────────────────────────────────────────────────────────────────────
       # MODE: daily
-      # Fast weeknight run.  Fetches current prices for held positions only,
-      # updates portfolio value and SPY benchmark, appends to history.
       # ─────────────────────────────────────────────────────────────────────────
       - name: "[daily] Refresh holding prices"
         if: steps.mode.outputs.mode == 'daily'
@@ -134,10 +133,10 @@ jobs:
           MODE="${{ steps.mode.outputs.mode }}"
           DATE="$(date -u '+%Y-%m-%d')"
 
-          if [ "$MODE" = "reset" ]; then
-            git add raw_data.json data.json portfolio.json index.html
+          if [ "$MODE" = "reset-only" ] || [ "$MODE" = "reset" ]; then
+            git add data.json portfolio.json index.html
             git diff --cached --quiet || \
-              git commit -m "reset: clean 25-stock portfolio ${DATE}"
+              git commit -m "reset: retroactive portfolio history ${DATE}"
 
           elif [ "$MODE" = "weekly" ]; then
             git add raw_data.json data.json portfolio.json index.html
