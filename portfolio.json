@@ -3,12 +3,12 @@
   "start_value": 1000000.0,
   "reset_date": "2026-03-20",
   "cash": 747.05,
-  "total_value": 1060161.9,
+  "total_value": 1060155.35,
   "holdings": {
     "NVDA": {
       "shares": 257.907422,
       "cost_basis": 192.8396,
-      "last_price": 208.27,
+      "last_price": 208.26,
       "bought_date": "2026-02-24"
     },
     "PLTR": {
@@ -32,7 +32,7 @@
     "MSFT": {
       "shares": 108.305403,
       "cost_basis": 389.0,
-      "last_price": 424.62,
+      "last_price": 424.6,
       "bought_date": "2026-02-24"
     },
     "CTRA": {
@@ -98,7 +98,7 @@
     "AMD": {
       "shares": 180.17617,
       "cost_basis": 213.84,
-      "last_price": 347.81,
+      "last_price": 347.8,
       "bought_date": "2026-02-24"
     },
     "MA": {
@@ -405,6 +405,11 @@
     {
       "date": "2026-04-25",
       "value": 1060161.9,
+      "cash": 747.05
+    },
+    {
+      "date": "2026-04-27",
+      "value": 1060155.35,
       "cash": 747.05
     }
   ],
@@ -784,5 +789,5 @@
       "cost": 36605.22
     }
   ],
-  "updated_at": "2026-04-25"
+  "updated_at": "2026-04-27"
 }
