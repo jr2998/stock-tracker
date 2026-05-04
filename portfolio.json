@@ -2,8 +2,8 @@
   "start_date": "2026-02-24",
   "start_value": 1000000.0,
   "reset_date": "2026-03-20",
-  "cash": 747.05,
-  "total_value": 1062482.13,
+  "cash": 716.03,
+  "total_value": 1062441.82,
   "holdings": {
     "NVDA": {
       "shares": 257.907422,
@@ -26,13 +26,13 @@
     "INTU": {
       "shares": 117.904059,
       "cost_basis": 358.71,
-      "last_price": 399.04,
+      "last_price": 399.025,
       "bought_date": "2026-02-24"
     },
     "MSFT": {
       "shares": 108.305403,
       "cost_basis": 389.0,
-      "last_price": 414.44,
+      "last_price": 414.195,
       "bought_date": "2026-02-24"
     },
     "CTRA": {
@@ -131,12 +131,6 @@
       "last_price": 250.71,
       "bought_date": "2026-02-24"
     },
-    "EIX": {
-      "shares": 501.636349,
-      "cost_basis": 75.24,
-      "last_price": 69.88,
-      "bought_date": "2026-02-24"
-    },
     "INCY": {
       "shares": 372.734672,
       "cost_basis": 101.05,
@@ -152,8 +146,14 @@
     "LRCX": {
       "shares": 150.047411,
       "cost_basis": 243.9577,
-      "last_price": 256.72,
+      "last_price": 256.64,
       "bought_date": "2026-02-24"
+    },
+    "TER": {
+      "shares": 101.573071,
+      "cost_basis": 345.42,
+      "last_price": 345.42,
+      "bought_date": "2026-05-04"
     }
   },
   "history": [
@@ -436,6 +436,11 @@
       "date": "2026-05-02",
       "value": 1062482.13,
       "cash": 747.05
+    },
+    {
+      "date": "2026-05-04",
+      "value": 1062441.82,
+      "cash": 716.03
     }
   ],
   "spy_history": [
@@ -832,7 +837,24 @@
       "shares": 150.047411,
       "price": 243.96,
       "cost": 36605.22
+    },
+    {
+      "date": "2026-05-04",
+      "action": "SELL",
+      "ticker": "EIX",
+      "shares": 501.636349,
+      "price": 69.88,
+      "proceeds": 35054.35,
+      "gain_pct": -7.12
+    },
+    {
+      "date": "2026-05-04",
+      "action": "BUY",
+      "ticker": "TER",
+      "shares": 101.573071,
+      "price": 345.42,
+      "cost": 35085.37
     }
   ],
-  "updated_at": "2026-05-02"
+  "updated_at": "2026-05-04"
 }
