@@ -2,7 +2,7 @@
   "start_date": "2026-02-24",
   "start_value": 1000000.0,
   "reset_date": "2026-03-20",
-  "cash": 901.25,
+  "cash": 740.43,
   "total_value": 1126616.86,
   "holdings": {
     "NVDA": {
@@ -77,12 +77,6 @@
       "last_price": 48.89,
       "bought_date": "2026-02-24"
     },
-    "BA": {
-      "shares": 167.114734,
-      "cost_basis": 233.39,
-      "last_price": 216.14,
-      "bought_date": "2026-02-24"
-    },
     "MCO": {
       "shares": 85.841821,
       "cost_basis": 451.594,
@@ -154,6 +148,12 @@
       "cost_basis": 124.55,
       "last_price": 137.2,
       "bought_date": "2026-07-06"
+    },
+    "STX": {
+      "shares": 42.37791,
+      "cost_basis": 856.13,
+      "last_price": 856.13,
+      "bought_date": "2026-08-03"
     }
   },
   "history": [
@@ -826,6 +826,11 @@
       "date": "2026-08-01",
       "value": 1126616.86,
       "cash": 901.25
+    },
+    {
+      "date": "2026-08-03",
+      "value": 1126616.86,
+      "cash": 740.43
     }
   ],
   "spy_history": [
@@ -1504,7 +1509,24 @@
       "shares": 354.568198,
       "price": 124.55,
       "cost": 44161.47
+    },
+    {
+      "date": "2026-08-03",
+      "action": "SELL",
+      "ticker": "BA",
+      "shares": 167.114734,
+      "price": 216.14,
+      "proceeds": 36120.18,
+      "gain_pct": -7.39
+    },
+    {
+      "date": "2026-08-03",
+      "action": "BUY",
+      "ticker": "STX",
+      "shares": 42.37791,
+      "price": 856.13,
+      "cost": 36281.0
     }
   ],
-  "updated_at": "2026-08-01"
+  "updated_at": "2026-08-03"
 }
