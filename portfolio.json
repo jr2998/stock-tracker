@@ -3,156 +3,156 @@
   "start_value": 1000000.0,
   "reset_date": "2026-03-20",
   "cash": 26777.59,
-  "total_value": 1197799.61,
+  "total_value": 1203095.29,
   "holdings": {
     "NVDA": {
       "shares": 257.907422,
       "cost_basis": 192.8396,
-      "last_price": 217.5,
+      "last_price": 224.09,
       "bought_date": "2026-02-24"
     },
     "PLTR": {
       "shares": 337.140073,
       "cost_basis": 128.84,
-      "last_price": 174.94,
+      "last_price": 171.04,
       "bought_date": "2026-02-24"
     },
     "INTU": {
       "shares": 117.904059,
       "cost_basis": 358.71,
-      "last_price": 336.44,
+      "last_price": 334.71,
       "bought_date": "2026-02-24"
     },
     "MSFT": {
       "shares": 108.305403,
       "cost_basis": 389.0,
-      "last_price": 503.81,
+      "last_price": 492.43,
       "bought_date": "2026-02-24"
     },
     "NEM": {
       "shares": 332.364588,
       "cost_basis": 123.8394,
-      "last_price": 117.21,
+      "last_price": 117.84,
       "bought_date": "2026-02-24"
     },
     "LLY": {
       "shares": 39.03197,
       "cost_basis": 1042.15,
-      "last_price": 1215.02,
+      "last_price": 1220.28,
       "bought_date": "2026-02-24"
     },
     "BX": {
       "shares": 345.987534,
       "cost_basis": 116.41,
-      "last_price": 147.17,
+      "last_price": 146.41,
       "bought_date": "2026-02-24"
     },
     "AVGO": {
       "shares": 121.779333,
       "cost_basis": 325.49,
-      "last_price": 416.08,
+      "last_price": 416.05,
       "bought_date": "2026-02-24"
     },
     "LVS": {
       "shares": 714.259837,
       "cost_basis": 55.05,
-      "last_price": 45.72,
+      "last_price": 45.68,
       "bought_date": "2026-02-24"
     },
     "MCO": {
       "shares": 85.841821,
       "cost_basis": 451.594,
-      "last_price": 476.48,
+      "last_price": 477.84,
       "bought_date": "2026-02-24"
     },
     "AMD": {
       "shares": 180.17617,
       "cost_basis": 213.84,
-      "last_price": 474.32,
+      "last_price": 482.93,
       "bought_date": "2026-02-24"
     },
     "MA": {
       "shares": 77.367212,
       "cost_basis": 498.0,
-      "last_price": 561.44,
+      "last_price": 559.73,
       "bought_date": "2026-02-24"
     },
     "ES": {
       "shares": 516.131716,
       "cost_basis": 74.344,
-      "last_price": 71.13,
+      "last_price": 71.55,
       "bought_date": "2026-02-24"
     },
     "BR": {
       "shares": 215.243551,
       "cost_basis": 176.808,
-      "last_price": 170.73,
+      "last_price": 169.27,
       "bought_date": "2026-02-24"
     },
     "HOOD": {
       "shares": 517.485725,
       "cost_basis": 73.39,
-      "last_price": 94.38,
+      "last_price": 94.91,
       "bought_date": "2026-02-24"
     },
     "ADBE": {
       "shares": 148.527793,
       "cost_basis": 255.17,
-      "last_price": 263.71,
+      "last_price": 258.75,
       "bought_date": "2026-02-24"
     },
     "INCY": {
       "shares": 372.734672,
       "cost_basis": 101.05,
-      "last_price": 121.07,
+      "last_price": 120.77,
       "bought_date": "2026-02-24"
     },
     "IBM": {
       "shares": 163.563775,
       "cost_basis": 229.32,
-      "last_price": 238.42,
+      "last_price": 235.98,
       "bought_date": "2026-02-24"
     },
     "LRCX": {
       "shares": 150.047411,
       "cost_basis": 243.9577,
-      "last_price": 311.41,
+      "last_price": 326.11,
       "bought_date": "2026-02-24"
     },
     "TER": {
       "shares": 101.573071,
       "cost_basis": 345.42,
-      "last_price": 379.56,
+      "last_price": 402.74,
       "bought_date": "2026-05-04"
     },
     "PTC": {
       "shares": 354.568198,
       "cost_basis": 124.55,
-      "last_price": 150.44,
+      "last_price": 147.99,
       "bought_date": "2026-07-06"
     },
     "STX": {
       "shares": 42.37791,
       "cost_basis": 856.13,
-      "last_price": 820.52,
+      "last_price": 878.21,
       "bought_date": "2026-08-03"
     },
     "GOOGL": {
       "shares": 147.113796,
       "cost_basis": 354.3,
-      "last_price": 343.8,
+      "last_price": 343.54,
       "bought_date": "2026-08-10"
     },
     "APH": {
       "shares": 298.168455,
       "cost_basis": 169.18,
-      "last_price": 167.23,
+      "last_price": 169.96,
       "bought_date": "2026-08-10"
     },
     "HAS": {
       "shares": 534.444067,
       "cost_basis": 93.52,
-      "last_price": 97.04,
+      "last_price": 94.89,
       "bought_date": "2026-08-10"
     }
   },
@@ -871,6 +871,11 @@
       "date": "2026-08-12",
       "value": 1197799.61,
       "cash": 26777.59
+    },
+    {
+      "date": "2026-08-13",
+      "value": 1203095.29,
+      "cash": 26777.59
     }
   ],
   "spy_history": [
@@ -1341,6 +1346,10 @@
     {
       "date": "2026-08-11",
       "value": 1127016.84
+    },
+    {
+      "date": "2026-08-12",
+      "value": 1129839.63
     }
   ],
   "trades": [
@@ -1647,5 +1656,5 @@
       "cost": 49981.21
     }
   ],
-  "updated_at": "2026-08-12"
+  "updated_at": "2026-08-13"
 }
