@@ -3,156 +3,156 @@
   "start_value": 1000000.0,
   "reset_date": "2026-03-20",
   "cash": 26777.59,
-  "total_value": 1159578.09,
+  "total_value": 1182927.55,
   "holdings": {
     "NVDA": {
       "shares": 257.907422,
       "cost_basis": 192.8396,
-      "last_price": 222.27,
+      "last_price": 227.38,
       "bought_date": "2026-02-24"
     },
     "PLTR": {
       "shares": 337.140073,
       "cost_basis": 128.84,
-      "last_price": 177.64,
+      "last_price": 183.09,
       "bought_date": "2026-02-24"
     },
     "INTU": {
       "shares": 117.904059,
       "cost_basis": 358.71,
-      "last_price": 303.19,
+      "last_price": 304.12,
       "bought_date": "2026-02-24"
     },
     "MSFT": {
       "shares": 108.305403,
       "cost_basis": 389.0,
-      "last_price": 493.78,
+      "last_price": 501.61,
       "bought_date": "2026-02-24"
     },
     "NEM": {
       "shares": 332.364588,
       "cost_basis": 123.8394,
-      "last_price": 123.41,
+      "last_price": 123.05,
       "bought_date": "2026-02-24"
     },
     "LLY": {
       "shares": 39.03197,
       "cost_basis": 1042.15,
-      "last_price": 1152.93,
+      "last_price": 1164.89,
       "bought_date": "2026-02-24"
     },
     "BX": {
       "shares": 345.987534,
       "cost_basis": 116.41,
-      "last_price": 124.96,
+      "last_price": 126.41,
       "bought_date": "2026-02-24"
     },
     "AVGO": {
       "shares": 121.779333,
       "cost_basis": 325.49,
-      "last_price": 357.61,
+      "last_price": 362.66,
       "bought_date": "2026-02-24"
     },
     "LVS": {
       "shares": 714.259837,
       "cost_basis": 55.05,
-      "last_price": 39.98,
+      "last_price": 40.26,
       "bought_date": "2026-02-24"
     },
     "MCO": {
       "shares": 85.841821,
       "cost_basis": 451.594,
-      "last_price": 468.59,
+      "last_price": 467.22,
       "bought_date": "2026-02-24"
     },
     "AMD": {
       "shares": 180.17617,
       "cost_basis": 213.84,
-      "last_price": 559.82,
+      "last_price": 615.52,
       "bought_date": "2026-02-24"
     },
     "MA": {
       "shares": 77.367212,
       "cost_basis": 498.0,
-      "last_price": 565.24,
+      "last_price": 567.65,
       "bought_date": "2026-02-24"
     },
     "ES": {
       "shares": 516.131716,
       "cost_basis": 74.344,
-      "last_price": 67.72,
+      "last_price": 66.89,
       "bought_date": "2026-02-24"
     },
     "BR": {
       "shares": 215.243551,
       "cost_basis": 176.808,
-      "last_price": 163.13,
+      "last_price": 164.62,
       "bought_date": "2026-02-24"
     },
     "HOOD": {
       "shares": 517.485725,
       "cost_basis": 73.39,
-      "last_price": 119.82,
+      "last_price": 123.3,
       "bought_date": "2026-02-24"
     },
     "ADBE": {
       "shares": 148.527793,
       "cost_basis": 255.17,
-      "last_price": 248.92,
+      "last_price": 249.52,
       "bought_date": "2026-02-24"
     },
     "INCY": {
       "shares": 372.734672,
       "cost_basis": 101.05,
-      "last_price": 125.31,
+      "last_price": 124.65,
       "bought_date": "2026-02-24"
     },
     "IBM": {
       "shares": 163.563775,
       "cost_basis": 229.32,
-      "last_price": 229.55,
+      "last_price": 231.93,
       "bought_date": "2026-02-24"
     },
     "LRCX": {
       "shares": 150.047411,
       "cost_basis": 243.9577,
-      "last_price": 288.11,
+      "last_price": 302.28,
       "bought_date": "2026-02-24"
     },
     "TER": {
       "shares": 101.573071,
       "cost_basis": 345.42,
-      "last_price": 371.47,
+      "last_price": 381.54,
       "bought_date": "2026-05-04"
     },
     "PTC": {
       "shares": 354.568198,
       "cost_basis": 124.55,
-      "last_price": 135.89,
+      "last_price": 135.28,
       "bought_date": "2026-07-06"
     },
     "STX": {
       "shares": 42.37791,
       "cost_basis": 856.13,
-      "last_price": 858.79,
+      "last_price": 877.325,
       "bought_date": "2026-08-03"
     },
     "GOOGL": {
       "shares": 147.113796,
       "cost_basis": 354.3,
-      "last_price": 349.54,
+      "last_price": 354.97,
       "bought_date": "2026-08-10"
     },
     "APH": {
       "shares": 298.168455,
       "cost_basis": 169.18,
-      "last_price": 77.55,
+      "last_price": 80.72,
       "bought_date": "2026-08-10"
     },
     "HAS": {
       "shares": 534.444067,
       "cost_basis": 93.52,
-      "last_price": 87.57,
+      "last_price": 87.72,
       "bought_date": "2026-08-10"
     }
   },
@@ -1041,6 +1041,11 @@
       "date": "2026-09-21",
       "value": 1159578.09,
       "cash": 26777.59
+    },
+    {
+      "date": "2026-09-22",
+      "value": 1182927.55,
+      "cash": 26777.59
     }
   ],
   "spy_history": [
@@ -1050,11 +1055,11 @@
     },
     {
       "date": "2026-02-25",
-      "value": 1008438.41
+      "value": 1008438.32
     },
     {
       "date": "2026-02-26",
-      "value": 1002837.06
+      "value": 1002836.97
     },
     {
       "date": "2026-02-27",
@@ -1070,15 +1075,15 @@
     },
     {
       "date": "2026-03-04",
-      "value": 996770.17
+      "value": 996770.26
     },
     {
       "date": "2026-03-05",
-      "value": 991212.66
+      "value": 991212.75
     },
     {
       "date": "2026-03-06",
-      "value": 978220.67
+      "value": 978220.76
     },
     {
       "date": "2026-03-09",
@@ -1086,7 +1091,7 @@
     },
     {
       "date": "2026-03-10",
-      "value": 985204.04
+      "value": 985204.12
     },
     {
       "date": "2026-03-11",
@@ -1094,7 +1099,7 @@
     },
     {
       "date": "2026-03-12",
-      "value": 969025.97
+      "value": 969026.06
     },
     {
       "date": "2026-03-13",
@@ -1110,7 +1115,7 @@
     },
     {
       "date": "2026-03-18",
-      "value": 962290.04
+      "value": 962289.95
     },
     {
       "date": "2026-03-19",
@@ -1118,7 +1123,7 @@
     },
     {
       "date": "2026-03-20",
-      "value": 946157.34
+      "value": 946157.43
     },
     {
       "date": "2026-03-23",
@@ -1130,15 +1135,15 @@
     },
     {
       "date": "2026-03-25",
-      "value": 958192.86
+      "value": 958192.77
     },
     {
       "date": "2026-03-26",
-      "value": 941080.77
+      "value": 941080.68
     },
     {
       "date": "2026-03-27",
-      "value": 925033.53
+      "value": 925033.45
     },
     {
       "date": "2026-03-30",
@@ -1146,7 +1151,7 @@
     },
     {
       "date": "2026-03-31",
-      "value": 948739.62
+      "value": 948739.53
     },
     {
       "date": "2026-04-01",
@@ -1154,11 +1159,11 @@
     },
     {
       "date": "2026-04-02",
-      "value": 956748.65
+      "value": 956748.56
     },
     {
       "date": "2026-04-06",
-      "value": 961270.91
+      "value": 961271.0
     },
     {
       "date": "2026-04-07",
@@ -1170,7 +1175,7 @@
     },
     {
       "date": "2026-04-09",
-      "value": 991877.32
+      "value": 991877.23
     },
     {
       "date": "2026-04-10",
@@ -1178,7 +1183,7 @@
     },
     {
       "date": "2026-04-13",
-      "value": 1000907.44
+      "value": 1000907.53
     },
     {
       "date": "2026-04-14",
@@ -1214,15 +1219,15 @@
     },
     {
       "date": "2026-04-24",
-      "value": 1041521.49
+      "value": 1041521.58
     },
     {
       "date": "2026-04-27",
-      "value": 1043315.97
+      "value": 1043315.88
     },
     {
       "date": "2026-04-28",
-      "value": 1038239.21
+      "value": 1038239.12
     },
     {
       "date": "2026-04-29",
@@ -1282,7 +1287,7 @@
     },
     {
       "date": "2026-05-19",
-      "value": 1070391.85
+      "value": 1070391.94
     },
     {
       "date": "2026-05-20",
@@ -1302,7 +1307,7 @@
     },
     {
       "date": "2026-05-27",
-      "value": 1094798.2
+      "value": 1094798.29
     },
     {
       "date": "2026-05-28",
@@ -1314,7 +1319,7 @@
     },
     {
       "date": "2026-06-01",
-      "value": 1106585.55
+      "value": 1106585.64
     },
     {
       "date": "2026-06-02",
@@ -1338,7 +1343,7 @@
     },
     {
       "date": "2026-06-09",
-      "value": 1075235.3
+      "value": 1075235.21
     },
     {
       "date": "2026-06-10",
@@ -1619,6 +1624,10 @@
     {
       "date": "2026-09-18",
       "value": 1116810.03
+    },
+    {
+      "date": "2026-09-21",
+      "value": 1134126.16
     }
   ],
   "trades": [
@@ -1925,5 +1934,5 @@
       "cost": 49981.21
     }
   ],
-  "updated_at": "2026-09-21"
+  "updated_at": "2026-09-22"
 }
